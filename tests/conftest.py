@@ -9,6 +9,9 @@ import os
 os.environ["API_KEY"] = "test-api-key"
 os.environ["APP_ENV"] = "test"
 os.environ["LLM_PROVIDER"] = "mock"
+os.environ["LLM_RETRY_BACKOFF_SECONDS"] = "0"
+os.environ["LLM_MAX_RETRIES"] = "2"
+os.environ["LLM_MIN_CONFIDENCE"] = "0.75"
 TEST_DATABASE_URL = os.getenv("TEST_DATABASE_URL")
 if TEST_DATABASE_URL:
     os.environ["DATABASE_URL"] = TEST_DATABASE_URL

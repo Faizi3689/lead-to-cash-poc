@@ -4,9 +4,11 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.db import get_db
-from app.schemas import ErrorOut, InquiryCreate, InquiryOut
+from app.llm.base import LLMClient, LLMUnavailable
+from app.llm.factory import get_llm_client
+from app.schemas import ErrorOut, ExtractionOut, InquiryCreate, InquiryOut, ProductOut
 from app.security import require_api_key
-from app.services import inquiry_service
+from app.services import extraction_service, inquiry_service
 
 router = APIRouter(prefix="/v1/inquiries", tags=["inquiries"], dependencies=[Depends(require_api_key)])
 
@@ -47,3 +49,50 @@ def read_inquiry(inquiry_id: uuid.UUID, db: Session = Depends(get_db)) -> Inquir
     if inquiry is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inquiry not found")
     return _out(inquiry, False)
+
+
+def _llm_or_none() -> LLMClient | None:
+    """Build the LLM client; a configuration problem (e.g. missing key) becomes a handled outage."""
+    try:
+        return get_llm_client()
+    except LLMUnavailable:
+        return None
+
+
+class _UnavailableLLM:
+    provider = "unconfigured"
+    model = None
+
+    def complete_json(self, messages):
+        raise LLMUnavailable("LLM provider is not configured", retryable=False)
+
+
+@router.post(
+    "/{inquiry_id}/extract",
+    response_model=ExtractionOut,
+    responses={404: {"model": ErrorOut}, 409: {"model": ErrorOut, "description": "In progress or needs a human"}},
+)
+def extract(inquiry_id: uuid.UUID, db: Session = Depends(get_db),
+            llm: LLMClient | None = Depends(_llm_or_none)) -> ExtractionOut:
+    """Run AI extraction. Safe to call repeatedly: a finished extraction is returned, not redone."""
+    try:
+        result = extraction_service.extract_inquiry(db, inquiry_id, llm or _UnavailableLLM())
+    except extraction_service.InquiryNotFound:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inquiry not found")
+    except extraction_service.ExtractionNotAllowed as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+    p = result.product
+    return ExtractionOut(
+        inquiry_id=result.inquiry.id,
+        status=result.inquiry.status,
+        outcome=result.outcome,
+        replay=result.replay,
+        attempts=result.attempts,
+        confidence=result.confidence,
+        product=ProductOut(product_id=p.id, sku=p.sku, name=p.name, unit_price=str(p.unit_price),
+                           currency=p.currency) if p else None,
+        extracted=result.inquiry.extracted,
+        review_reasons=result.reasons,
+        exception_ids=result.exception_ids,
+    )

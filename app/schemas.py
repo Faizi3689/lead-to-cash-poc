@@ -32,3 +32,24 @@ class ErrorOut(BaseModel):
     error: str
     detail: str | list | dict | None = None
     request_id: str | None = None
+
+
+class ProductOut(BaseModel):
+    product_id: uuid.UUID
+    sku: str
+    name: str
+    unit_price: str
+    currency: str
+
+
+class ExtractionOut(BaseModel):
+    inquiry_id: uuid.UUID
+    status: str
+    outcome: Literal["extracted", "needs_review"]
+    replay: bool = False
+    attempts: int
+    confidence: float | None = None
+    product: ProductOut | None = None
+    extracted: dict | None = None
+    review_reasons: list[str] = []
+    exception_ids: list[uuid.UUID] = []

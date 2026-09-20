@@ -1,0 +1,60 @@
+"""Deterministic offline 'LLM' for tests and demos. It returns JSON TEXT, so the exact same
+parsing + validation pipeline runs as with OpenAI.
+
+Failure simulation (put the marker anywhere in the customer message):
+  [[mock:timeout]]         -> raises LLMUnavailable (timeout)
+  [[mock:invalid_json]]    -> returns text that is not JSON
+  [[mock:low_confidence]]  -> confidence 0.40
+  [[mock:hallucinate]]     -> invents a 50% discount that is not in the message
+"""
+import json
+import re
+
+from app.llm.base import LLMResponse, LLMUnavailable
+
+_QTY = re.compile(r"(\d[\d,]*)\s*(?:units?|pcs|pieces|cases|boxes|bottles|cartons)\b", re.I)
+_DISCOUNT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
+_PRODUCT = re.compile(r"\bproduct\s+([a-z0-9-]+)", re.I)
+_APPOINTMENT = re.compile(r"\b(talk|call|meet|meeting|discuss|speak)\b", re.I)
+_WHEN = re.compile(r"\b(today|tomorrow|next week|next month|monday|tuesday|wednesday|thursday|friday)\b", re.I)
+_DELIVERY = re.compile(r"\b(next (?:week|month|quarter)|asap|this month)\b", re.I)
+
+
+class MockLLMClient:
+    provider = "mock"
+    model = "mock-extractor-v1"
+
+    def complete_json(self, messages: list[dict[str, str]]) -> LLMResponse:
+        message = messages[-1]["content"]
+        # Only look at the customer text inside the delimiters of the first user turn.
+        first_user = next(m["content"] for m in messages if m["role"] == "user")
+        match = re.search(r"<<<\n(.*)\n>>>", first_user, re.S)
+        text = match.group(1) if match else message
+
+        if "[[mock:timeout]]" in text:
+            raise LLMUnavailable("mock timeout", kind="timeout")
+        if "[[mock:invalid_json]]" in text:
+            return LLMResponse(text="Sure! Here is the data: product X, 200 units", model=self.model, latency_ms=5)
+
+        qty = _QTY.search(text)
+        disc = _DISCOUNT.search(text)
+        prod = _PRODUCT.search(text)
+        when = _WHEN.search(text)
+        delivery = _DELIVERY.search(text)
+
+        data = {
+            "product_name": f"Product {prod.group(1).upper()}" if prod else None,
+            "quantity": int(qty.group(1).replace(",", "")) if qty else None,
+            "requested_discount_pct": float(disc.group(1)) if disc else None,
+            "delivery_timeframe": delivery.group(1).lower() if delivery else None,
+            "appointment_requested": bool(_APPOINTMENT.search(text)),
+            "appointment_preference": when.group(1).lower() if (when and _APPOINTMENT.search(text)) else None,
+            "intent": "quote_request" if (prod or qty) else "other",
+            "confidence": 0.9 if (prod and qty) else 0.5,
+            "missing_fields": [f for f, v in (("product_name", prod), ("quantity", qty)) if not v],
+        }
+        if "[[mock:low_confidence]]" in text:
+            data["confidence"] = 0.4
+        if "[[mock:hallucinate]]" in text:
+            data["requested_discount_pct"] = 50
+        return LLMResponse(text=json.dumps(data), model=self.model, latency_ms=5)

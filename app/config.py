@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     llm_timeout_seconds: int = 20
     llm_max_retries: int = 2
     llm_min_confidence: float = 0.75
+    llm_retry_backoff_seconds: float = 1.0
 
     n8n_base_url: str = "http://localhost:5678"
 
