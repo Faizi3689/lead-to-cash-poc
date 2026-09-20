@@ -1,0 +1,178 @@
+{
+  "name": "00 - Connectivity Check",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "l2c-ping",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "05c6f3da-23f0-4d7a-bcce-aecee25c2d6f",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -688,
+        112
+      ],
+      "webhookId": "l2c-ping"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cfg-api-base",
+              "name": "api_base_url",
+              "value": "https://lead-to-cash-api.onrender.com",
+              "type": "string"
+            },
+            {
+              "id": "cfg-request-id",
+              "name": "request_id",
+              "value": "={{ $json.headers['x-request-id'] || $execution.id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "137498dd-770c-45fb-a357-5d976007e05d",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -464,
+        112
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.api_base_url }}/v1/ping",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Request-ID",
+              "value": "={{ $json.request_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "c9fffbdd-e541-48fd-ba6c-d57a43d6a59c",
+      "name": "Call Python API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -240,
+        112
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "Ue8aI6wkf3OazTFg",
+          "name": "Header Auth account"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { n8n: 'ok', request_id: $('Config').item.json.request_id, python_api: $json } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "fab828c5-bdcd-4fd2-94a5-bc3f3a0f2f2f",
+      "name": "Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { n8n: 'ok', request_id: $('Config').item.json.request_id, python_api: 'unreachable', error: $json.error?.message || $json.error || 'unknown' } }}",
+        "options": {
+          "responseCode": 503
+        }
+      },
+      "id": "c7416d93-e5a9-4592-b674-ef1556ff0c1d",
+      "name": "Respond API Down",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        208
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Call Python API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Python API": {
+      "main": [
+        [
+          {
+            "node": "Respond OK",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond API Down",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "e989d080-2fb9-49cd-8ec6-a3988dde2d48",
+  "meta": {
+    "instanceId": "fa8e6302307a6bf53b3824f37ab03994951582cc1eae0bc1e4aa1718b8d7792b"
+  },
+  "nodeGroups": [],
+  "id": "IW7QxjWqs9JIalcg",
+  "tags": []
+}
