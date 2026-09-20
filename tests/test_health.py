@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 
-from app.config import get_settings
 from app.main import app
+from tests.conftest import API_HEADERS
 
 client = TestClient(app)
 
@@ -13,7 +13,9 @@ def test_health_ok():
 
 
 def test_ping_rejects_missing_key():
-    assert client.get("/v1/ping").status_code == 401
+    r = client.get("/v1/ping")
+    assert r.status_code == 401
+    assert r.json()["error"] == "http_error"
 
 
 def test_ping_rejects_wrong_key():
@@ -21,6 +23,13 @@ def test_ping_rejects_wrong_key():
 
 
 def test_ping_accepts_valid_key():
-    r = client.get("/v1/ping", headers={"X-API-Key": get_settings().api_key})
+    r = client.get("/v1/ping", headers=API_HEADERS)
     assert r.status_code == 200
     assert r.json()["service"] == "lead-to-cash-api"
+
+
+def test_request_id_is_echoed_or_generated():
+    r = client.get("/health", headers={"X-Request-ID": "n8n-exec-123"})
+    assert r.headers["X-Request-ID"] == "n8n-exec-123"
+    generated = client.get("/health", headers={"X-Request-ID": "bad id <script>"})
+    assert generated.headers["X-Request-ID"] != "bad id <script>"

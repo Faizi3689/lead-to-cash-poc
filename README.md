@@ -46,3 +46,8 @@ All non-health endpoints require the `X-API-Key` header (n8n Header Auth credent
 - Security (production approach)
 - Assumptions / Known limitations
 - AI-assisted development disclosure
+- ## Database
+Apply migrations (safe to re-run):
+    python -m scripts.apply_migrations
+Verify controls (run in Supabase SQL Editor or psql) — all rows should be PASS:
+    db/verify_controls.sql
