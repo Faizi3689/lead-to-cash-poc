@@ -1,9 +1,9 @@
 """ORM models mapped onto the tables created by db/*.sql (the SQL files are the source of truth)."""
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
-from sqlalchemy import BigInteger, Boolean, ForeignKey, Identity, Integer, Numeric, SmallInteger, String, Text, text
+from sqlalchemy import BigInteger, Boolean, Date, ForeignKey, Identity, Integer, Numeric, SmallInteger, String, Text, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -152,5 +152,92 @@ class Approval(Base):
     token_hash: Mapped[str | None] = mapped_column(Text)
     expires_at: Mapped[datetime | None] = mapped_column()
     decided_at: Mapped[datetime | None] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(server_default=NOW)
+    updated_at: Mapped[datetime] = mapped_column(server_default=NOW)
+
+
+class Appointment(Base):
+    __tablename__ = "appointments"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), **UUID_PK)
+    inquiry_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("inquiries.id"), unique=True)
+    customer_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("customers.id"))
+    requested_text: Mapped[str | None] = mapped_column(Text)
+    scheduled_start: Mapped[datetime] = mapped_column()
+    scheduled_end: Mapped[datetime] = mapped_column()
+    timezone: Mapped[str] = mapped_column(Text, server_default=text("'UTC'"))
+    status: Mapped[str] = mapped_column(Text, server_default=text("'proposed'"))
+    external_ref: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(server_default=NOW)
+    updated_at: Mapped[datetime] = mapped_column(server_default=NOW)
+
+
+class Quote(Base):
+    __tablename__ = "quotes"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), **UUID_PK)
+    quote_number: Mapped[str] = mapped_column(Text, server_default=text(
+        "'Q-' || lpad(nextval('quote_number_seq')::text, 6, '0')"))
+    inquiry_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("inquiries.id"))
+    approval_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("approvals.id"), unique=True)
+    product_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("products.id"))
+    quantity: Mapped[int] = mapped_column(Integer)
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    discount_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2))
+    subtotal: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    discount_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    total: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    currency: Mapped[str] = mapped_column(String(3))
+    terms_hash: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, server_default=text("'issued'"))
+    valid_until: Mapped[date | None] = mapped_column(Date)
+    created_at: Mapped[datetime] = mapped_column(server_default=NOW)
+    updated_at: Mapped[datetime] = mapped_column(server_default=NOW)
+
+
+class Order(Base):
+    __tablename__ = "orders"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), **UUID_PK)
+    order_number: Mapped[str] = mapped_column(Text, server_default=text(
+        "'SO-' || lpad(nextval('order_number_seq')::text, 6, '0')"))
+    quote_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("quotes.id"), unique=True)
+    inquiry_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("inquiries.id"))
+    product_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("products.id"))
+    quantity: Mapped[int] = mapped_column(Integer)
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    discount_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2))
+    subtotal: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    discount_amount: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    total: Mapped[Decimal] = mapped_column(Numeric(14, 2))
+    currency: Mapped[str] = mapped_column(String(3))
+    terms_hash: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, server_default=text("'confirmed'"))
+    created_at: Mapped[datetime] = mapped_column(server_default=NOW)
+    updated_at: Mapped[datetime] = mapped_column(server_default=NOW)
+
+
+class Invoice(Base):
+    __tablename__ = "invoices"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), **UUID_PK)
+    direction: Mapped[str] = mapped_column(Text)
+    invoice_number: Mapped[str | None] = mapped_column(Text)
+    order_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("orders.id"))
+    counterparty_name: Mapped[str | None] = mapped_column(Text)
+    invoice_date: Mapped[date | None] = mapped_column(Date)
+    due_date: Mapped[date | None] = mapped_column(Date)
+    currency: Mapped[str | None] = mapped_column(String(3))
+    subtotal: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    discount_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    discount_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    tax_amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2), server_default=text("0"))
+    total: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    line_items: Mapped[list] = mapped_column(JSONB, server_default=text("'[]'"))
+    source: Mapped[str] = mapped_column(Text)
+    raw_text: Mapped[str | None] = mapped_column(Text)
+    fingerprint: Mapped[str | None] = mapped_column(Text)
+    terms_hash: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, server_default=text("'received'"))
     created_at: Mapped[datetime] = mapped_column(server_default=NOW)
     updated_at: Mapped[datetime] = mapped_column(server_default=NOW)

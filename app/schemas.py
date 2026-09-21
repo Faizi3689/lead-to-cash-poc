@@ -114,3 +114,67 @@ class ApprovalDecisionOut(BaseModel):
 
 class ExpireOut(BaseModel):
     expired: list[uuid.UUID] = []
+
+
+class QuoteOut(BaseModel):
+    quote_id: uuid.UUID
+    quote_number: str
+    inquiry_id: uuid.UUID
+    approval_id: uuid.UUID
+    status: str
+    quantity: int
+    unit_price: str
+    discount_pct: str
+    subtotal: str
+    discount_amount: str
+    total: str
+    currency: str
+    terms_hash: str
+    valid_until: str | None = None
+    replay: bool = False
+
+
+class OrderOut(BaseModel):
+    order_id: uuid.UUID
+    order_number: str
+    quote_id: uuid.UUID
+    inquiry_id: uuid.UUID
+    status: str
+    quantity: int
+    discount_pct: str
+    total: str
+    currency: str
+    terms_hash: str
+    replay: bool = False
+
+
+class InvoiceOut(BaseModel):
+    invoice_id: uuid.UUID
+    invoice_number: str | None
+    order_id: uuid.UUID | None
+    direction: str
+    status: str
+    counterparty_name: str | None
+    invoice_date: str | None
+    due_date: str | None
+    subtotal: str | None
+    discount_pct: str | None
+    discount_amount: str | None
+    tax_amount: str | None
+    total: str | None
+    currency: str | None
+    line_items: list = []
+    terms_hash: str | None = None
+    replay: bool = False
+
+
+class AppointmentOut(BaseModel):
+    appointment_id: uuid.UUID
+    inquiry_id: uuid.UUID
+    status: str
+    requested_text: str | None
+    scheduled_start: datetime
+    scheduled_end: datetime
+    timezone: str
+    external_ref: str | None
+    replay: bool = False

@@ -25,6 +25,11 @@ class Settings(BaseSettings):
 
     n8n_base_url: str = "http://localhost:5678"
 
+    business_timezone: str = "UTC"          # timezone for appointment slots (e.g. Asia/Karachi)
+    quote_valid_days: int = 14
+    invoice_due_days: int = 30
+    mock_calendar_fail: bool = False        # simulate the calendar service being down
+
     @field_validator("database_url")
     @classmethod
     def _use_psycopg3_driver(cls, v: str) -> str:

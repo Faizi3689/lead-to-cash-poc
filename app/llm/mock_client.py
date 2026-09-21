@@ -16,7 +16,7 @@ _QTY = re.compile(r"(\d[\d,]*)\s*(?:units?|pcs|pieces|cases|boxes|bottles|carton
 _DISCOUNT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 _PRODUCT = re.compile(r"\bproduct\s+([a-z0-9-]+)", re.I)
 _APPOINTMENT = re.compile(r"\b(talk|call|meet|meeting|discuss|speak)\b", re.I)
-_WHEN = re.compile(r"\b(today|tomorrow|next week|next month|monday|tuesday|wednesday|thursday|friday)\b", re.I)
+_WHEN = re.compile(r"\b(today|tomorrow|next week|monday|tuesday|wednesday|thursday|friday)\b", re.I)
 _DELIVERY = re.compile(r"\b(next (?:week|month|quarter)|asap|this month)\b", re.I)
 
 
@@ -39,7 +39,9 @@ class MockLLMClient:
         qty = _QTY.search(text)
         disc = _DISCOUNT.search(text)
         prod = _PRODUCT.search(text)
-        when = _WHEN.search(text)
+        talk = _APPOINTMENT.search(text)
+        # Timing words that follow "talk/call/meet" describe the appointment, not the delivery.
+        when = (_WHEN.search(text, talk.start()) or _WHEN.search(text)) if talk else None
         delivery = _DELIVERY.search(text)
 
         data = {
@@ -47,8 +49,8 @@ class MockLLMClient:
             "quantity": int(qty.group(1).replace(",", "")) if qty else None,
             "requested_discount_pct": float(disc.group(1)) if disc else None,
             "delivery_timeframe": delivery.group(1).lower() if delivery else None,
-            "appointment_requested": bool(_APPOINTMENT.search(text)),
-            "appointment_preference": when.group(1).lower() if (when and _APPOINTMENT.search(text)) else None,
+            "appointment_requested": bool(talk),
+            "appointment_preference": when.group(1).lower() if when else None,
             "intent": "quote_request" if (prod or qty) else "other",
             "confidence": 0.9 if (prod and qty) else 0.5,
             "missing_fields": [f for f, v in (("product_name", prod), ("quantity", qty)) if not v],

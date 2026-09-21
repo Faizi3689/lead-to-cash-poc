@@ -7,4 +7,5 @@ SQLAlchemy==2.0.36
 psycopg[binary]==3.2.3
 openai==1.59.3
 httpx==0.28.1
+tzdata==2025.2
 pytest==8.3.4
