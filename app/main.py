@@ -19,7 +19,7 @@ settings = get_settings()
 setup_logging(settings.log_level)
 log = logging.getLogger("app")
 
-app = FastAPI(title="Lead-to-Cash PoC", version="0.6.0")
+app = FastAPI(title="Lead-to-Cash PoC", version="1.0.0")
 app.include_router(inquiries.router)
 app.include_router(approvals.router)
 app.include_router(documents.router)

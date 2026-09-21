@@ -8,7 +8,7 @@ from app.db import get_db
 from app.models import Appointment, Invoice, Order, Quote
 from app.schemas import AppointmentOut, ErrorOut, InvoiceOut, OrderOut, QuoteOut
 from app.security import require_api_key
-from app.services import appointment_service, document_service
+from app.services import appointment_service, document_service, trail_service
 
 router = APIRouter(tags=["documents"], dependencies=[Depends(require_api_key)])
 
@@ -93,3 +93,14 @@ def create_appointment(inquiry_id: uuid.UUID, db: Session = Depends(get_db)) -> 
 def documents(inquiry_id: uuid.UUID, db: Session = Depends(get_db)) -> dict:
     """Evidence view: approval, quote, order and invoice side by side, with a consistency verdict."""
     return _run(document_service.commercial_summary, db, inquiry_id)
+
+
+@router.get("/v1/inquiries/{inquiry_id}/trail", responses={404: {"model": ErrorOut}})
+def trail(inquiry_id: uuid.UUID, db: Session = Depends(get_db)) -> dict:
+    """Full evidence trail: request, every AI attempt, rule decision, approval, executed documents,
+    exceptions with their resolution, and the ordered audit timeline."""
+    try:
+        return trail_service.build_trail(db, inquiry_id)
+    except trail_service.NotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+

@@ -76,3 +76,15 @@ Write-Host "`n=== 7. Consistency check ===" -ForegroundColor Cyan
 Write-Host "Customer asked for $($summary.requested_discount_pct)%, approval granted $($summary.documents.approval.discount_pct)%"
 $color = if ($summary.consistent) { "Green" } else { "Red" }
 Write-Host "Verdict: $($summary.verdict)" -ForegroundColor $color
+
+# 8. Full evidence trail (what an auditor would read)
+$trail = Invoke-RestMethod -Uri "$Base/v1/inquiries/$iid/trail" -Headers $h
+Write-Host "`n=== 8. Audit timeline ===" -ForegroundColor Cyan
+foreach ($e in $trail.timeline) { "{0}  {1,-28} {2}" -f $e.at.Substring(11, 8), $e.action, $e.actor }
+Write-Host "`nFull trail: $Base/v1/inquiries/$iid/trail" -ForegroundColor DarkGray
+
+# 8. Evidence trail (request -> AI -> rule -> approval -> executed -> exceptions)
+$trail = Invoke-RestMethod -Uri "$Base/v1/inquiries/$iid/trail" -Headers $h
+Write-Host "`n=== 8. Audit timeline ===" -ForegroundColor Cyan
+foreach ($e in $trail.timeline) { "{0}  {1,-28} {2}" -f $e.at.Substring(11,8), $e.action, $e.actor }
+Write-Host "`nFull trail: $Base/v1/inquiries/$iid/trail  (open in /docs with your API key)"
