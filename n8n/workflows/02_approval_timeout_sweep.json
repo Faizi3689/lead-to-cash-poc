@@ -1,0 +1,221 @@
+{
+  "name": "02 - Approval Timeout Sweep (every 15 min)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "0a46d49b-5b72-5a7e-b10f-d4e2a2bebd1a",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9a589865-18bd-5a0d-ba9f-6907b5097fe9",
+              "name": "api_base_url",
+              "value": "https://lead-to-cash-api.onrender.com",
+              "type": "string"
+            },
+            {
+              "id": "e8c2dd20-29e3-5cc8-9a3c-f768387bf87c",
+              "name": "request_id",
+              "value": "=n8n-{{ $execution.id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "3251febf-f9cd-5a68-92bc-a9c848ae8d0d",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').item.json.api_base_url }}/v1/approvals/expire-due",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 90000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Request-ID",
+              "value": "={{ $('Config').item.json.request_id }}"
+            }
+          ]
+        }
+      },
+      "id": "6bbb4708-c2bf-57ed-9f1f-cda8e8a08115",
+      "name": "Expire Overdue Approvals",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        400,
+        0
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "f51b28b6-366b-5b88-849d-b3122a72fe42",
+              "leftValue": "={{ $json.expired.length }}",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              },
+              "rightValue": 0
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "30bd0042-5e46-5145-954e-6fd4a8f1a9d4",
+      "name": "Anything Expired?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        600,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "7b16e6ff-9eb9-51d4-87e1-cae65e4e0595",
+              "name": "message",
+              "value": "={{ $json.expired.length + ' approval(s) timed out and moved to the review queue' }}",
+              "type": "string"
+            },
+            {
+              "id": "ee561bd2-987f-5670-a392-9fae4e6d444c",
+              "name": "approval_ids",
+              "value": "={{ $json.expired.join(', ') }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "ee878b53-7256-5b17-a149-0bff3edbc2e0",
+      "name": "Notify Sales Ops (demo)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        800,
+        -100
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "8e585dca-482e-577e-847f-61237f07c472",
+      "name": "Nothing to do",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        800,
+        100
+      ]
+    }
+  ],
+  "connections": {
+    "Every 15 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Expire Overdue Approvals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expire Overdue Approvals": {
+      "main": [
+        [
+          {
+            "node": "Anything Expired?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Anything Expired?": {
+      "main": [
+        [
+          {
+            "node": "Notify Sales Ops (demo)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Nothing to do",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "pinData": {}
+}

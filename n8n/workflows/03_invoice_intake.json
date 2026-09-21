@@ -1,0 +1,391 @@
+{
+  "name": "03 - Invoice Intake & Validation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "invoice",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "2fb161a1-10e8-53ce-90a2-52bfd54061f4",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        200
+      ],
+      "webhookId": "l2c-invoice"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9a589865-18bd-5a0d-ba9f-6907b5097fe9",
+              "name": "api_base_url",
+              "value": "https://lead-to-cash-api.onrender.com",
+              "type": "string"
+            },
+            {
+              "id": "e8c2dd20-29e3-5cc8-9a3c-f768387bf87c",
+              "name": "request_id",
+              "value": "=n8n-{{ $execution.id }}",
+              "type": "string"
+            },
+            {
+              "id": "fdec2c12-166a-5f99-88b8-3ba0b65b3ff8",
+              "name": "idempotency_key",
+              "value": "={{ $json.body.submission_id ? 'sub-' + $json.body.submission_id : 'sha-' + JSON.stringify($json.body).hash('sha256') }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "3251febf-f9cd-5a68-92bc-a9c848ae8d0d",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        200,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "11a5efde-45c4-5f04-a930-3869cdf93191",
+              "leftValue": "={{ $('Webhook').item.json.body.raw_text }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "8c895e30-fb9e-51c4-ac0b-2620bf506ee2",
+      "name": "Raw Text?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        400,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').item.json.api_base_url }}/v1/invoices/from-text",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Request-ID",
+              "value": "={{ $('Config').item.json.request_id }}"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $('Config').item.json.idempotency_key }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ raw_text: $('Webhook').item.json.body.raw_text }) }}"
+      },
+      "id": "8b838549-5396-5049-8b7d-601d6b73ee0b",
+      "name": "AI Capture Invoice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        600,
+        100
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').item.json.api_base_url }}/v1/invoices",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Request-ID",
+              "value": "={{ $('Config').item.json.request_id }}"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $('Config').item.json.idempotency_key }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify(Object.fromEntries(Object.entries($('Webhook').item.json.body).filter(e => e[0] !== 'submission_id'))) }}"
+      },
+      "id": "688f11e4-1814-572d-9f68-b47ae73669c9",
+      "name": "Submit Invoice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        600,
+        300
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { request_id: $('Config').item.json.request_id, error: $json.error?.message || $json.error || 'unknown' } }}",
+        "options": {
+          "responseCode": 502
+        }
+      },
+      "id": "0ec4f81f-7ee6-56c4-afe9-3ca5efb0e262",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        800,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { request_id: $('Config').item.json.request_id, invoice_id: $json.entity_id, status: $json.status, replay: $json.replay, ai: $json.ai, exceptions: $json.open_exceptions.map(e => ({ type: e.exception_type, severity: e.severity, message: e.message, overridable: e.overridable })) } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "e18eafe5-0336-58b6-a372-cfec1be67f3c",
+      "name": "Respond Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        900,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "507da86a-ea84-5dec-8a7b-c30e85333c0e",
+              "leftValue": "={{ $json.status }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "blocked"
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "33a8c71f-970c-5e3f-b35c-35e8fddc74e9",
+      "name": "Blocked?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "673a2723-a5c2-58c6-b2dc-94c633e371fe",
+              "name": "message",
+              "value": "={{ 'Invoice ' + ($json.document.invoice_number || $json.entity_id) + ' blocked: ' + $json.open_exceptions.map(e => e.exception_type).join(', ') }}",
+              "type": "string"
+            },
+            {
+              "id": "fed9625a-9278-54b2-86e8-adddf3736789",
+              "name": "review_url",
+              "value": "={{ $('Config').item.json.api_base_url }}/docs",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "55a1cb41-bace-5985-a2bf-7e92ed97990d",
+      "name": "Notify Finance (demo)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1300,
+        100
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "31d2a48b-bb9e-5401-b6ad-234a9717220a",
+      "name": "Validated",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1300,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Raw Text?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Raw Text?": {
+      "main": [
+        [
+          {
+            "node": "AI Capture Invoice",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Submit Invoice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Capture Invoice": {
+      "main": [
+        [
+          {
+            "node": "Respond Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Submit Invoice": {
+      "main": [
+        [
+          {
+            "node": "Respond Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond Result": {
+      "main": [
+        [
+          {
+            "node": "Blocked?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Blocked?": {
+      "main": [
+        [
+          {
+            "node": "Notify Finance (demo)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Validated",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "pinData": {}
+}

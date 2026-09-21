@@ -1,0 +1,1208 @@
+{
+  "name": "01 - Lead-to-Cash (Inquiry -> Approval -> Documents)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "inquiry",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "2fb161a1-10e8-53ce-90a2-52bfd54061f4",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        300
+      ],
+      "webhookId": "l2c-inquiry"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9a589865-18bd-5a0d-ba9f-6907b5097fe9",
+              "name": "api_base_url",
+              "value": "https://lead-to-cash-api.onrender.com",
+              "type": "string"
+            },
+            {
+              "id": "e8c2dd20-29e3-5cc8-9a3c-f768387bf87c",
+              "name": "request_id",
+              "value": "=n8n-{{ $execution.id }}",
+              "type": "string"
+            },
+            {
+              "id": "fdec2c12-166a-5f99-88b8-3ba0b65b3ff8",
+              "name": "idempotency_key",
+              "value": "={{ $json.body.message_id ? 'msg-' + $json.body.message_id : 'sha-' + JSON.stringify($json.body).hash('sha256') }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "3251febf-f9cd-5a68-92bc-a9c848ae8d0d",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').item.json.api_base_url }}/v1/inquiries",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Request-ID",
+              "value": "={{ $('Config').item.json.request_id }}"
+            },
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $('Config').item.json.idempotency_key }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ message: $('Webhook').item.json.body.message, customer_name: $('Webhook').item.json.body.customer_name || null, customer_email: $('Webhook').item.json.body.customer_email || null, source: 'webhook' }) }}"
+      },
+      "id": "ad912526-a5c3-5856-8813-20b37b46df96",
+      "name": "Create Inquiry",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        400,
+        300
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { request_id: $('Config').item.json.request_id, stage: 'intake', error: $json.error?.message || $json.error || 'unknown' } }}",
+        "options": {
+          "responseCode": 502
+        }
+      },
+      "id": "49e8bfb4-a7ed-50f0-8c4e-d6eec0324fad",
+      "name": "Respond Intake Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        600,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').item.json.api_base_url }}/v1/inquiries/{{ $('Create Inquiry').item.json.inquiry_id }}/extract",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 120000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Request-ID",
+              "value": "={{ $('Config').item.json.request_id }}"
+            }
+          ]
+        }
+      },
+      "id": "c0e7e544-6331-50de-aec8-71f8f65e8a1b",
+      "name": "AI Extract",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        600,
+        300
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { request_id: $('Config').item.json.request_id, stage: 'extraction', inquiry_id: $('Create Inquiry').item.json.inquiry_id, error: $json.error?.message || $json.error || 'unknown', note: 'Inquiry is stored; extraction can be retried safely.' } }}",
+        "options": {
+          "responseCode": 502
+        }
+      },
+      "id": "0973d171-47ef-5043-ad80-f7d5fc2eab5d",
+      "name": "Respond Extraction Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        800,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "56298b43-8f87-5da9-931e-153ed8cea9a6",
+              "leftValue": "={{ $json.outcome }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "extracted"
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "de33310c-1320-5c5d-aff5-a801b83a529b",
+      "name": "Extracted?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { request_id: $('Config').item.json.request_id, inquiry_id: $json.inquiry_id, status: $json.status, outcome: 'needs_review', reasons: $json.review_reasons, next: 'A person will review this inquiry (exception queue).' } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "ade74d92-b293-57ac-bc44-652bb5812c36",
+      "name": "Respond Needs Review",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1000,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').item.json.api_base_url }}/v1/inquiries/{{ $('Create Inquiry').item.json.inquiry_id }}/decide",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Request-ID",
+              "value": "={{ $('Config').item.json.request_id }}"
+            }
+          ]
+        }
+      },
+      "id": "2fcf4b86-93ff-56ab-b897-f7009899aed5",
+      "name": "Decide",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1000,
+        300
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { request_id: $('Config').item.json.request_id, stage: 'decision', inquiry_id: $('Create Inquiry').item.json.inquiry_id, error: $json.error?.message || $json.error || 'unknown' } }}",
+        "options": {
+          "responseCode": 502
+        }
+      },
+      "id": "3fe8486e-6c81-50bb-ad07-f27c6d7bde3d",
+      "name": "Respond Decision Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { request_id: $('Config').item.json.request_id, inquiry_id: $json.inquiry_id, status: $json.status, outcome: $json.outcome, reasons: $json.reasons, extracted: $('AI Extract').item.json.extracted, requested_terms: $json.amounts, approval: $json.approval ? { approval_id: $json.approval.approval_id, required_role: $json.approval.required_role, status: $json.approval.status, expires_at: $json.approval.expires_at } : null, approval_form_url: ($json.approval && $json.approval.status === 'pending') ? $execution.resumeFormUrl : null } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "87720c3a-70e1-5dee-a028-e060d82a15dc",
+      "name": "Respond Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "679022c4-76f5-5859-9d6c-9c3bd217f546",
+                    "leftValue": "={{ $('Decide').item.json.outcome }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "auto_approve"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "auto approved"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "loose"
+                },
+                "conditions": [
+                  {
+                    "id": "cb609a02-5ec2-5894-bf5c-9892c7ebddcf",
+                    "leftValue": "={{ $('Decide').item.json.approval?.status }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "pending"
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "needs approval"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "closed"
+        }
+      },
+      "id": "1cfab1bd-1a8c-5e5d-aec0-86ef2c6c9bd4",
+      "name": "Route by Outcome",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3,
+      "position": [
+        1400,
+        300
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "49f1c4d5-bc29-5ded-8c7d-bbfb2f1a92ed",
+      "name": "Closed (rejected or review)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1600,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "2bdf1907-203e-516d-a75f-2747cbc26a24",
+              "name": "to_role",
+              "value": "={{ $('Decide').item.json.approval.required_role }}",
+              "type": "string"
+            },
+            {
+              "id": "11acf33d-7760-5133-9c47-597b9f4f920a",
+              "name": "subject",
+              "value": "=Approval needed: {{ $('Decide').item.json.amounts.discount_pct }}% discount on {{ $('Decide').item.json.amounts.quantity }} units",
+              "type": "string"
+            },
+            {
+              "id": "e39d6b96-6470-54dd-82bc-285a1224b809",
+              "name": "form_url",
+              "value": "={{ $execution.resumeFormUrl }}",
+              "type": "string"
+            },
+            {
+              "id": "a1b9c8fd-cf3e-5d82-8cea-3b95ef52314c",
+              "name": "note",
+              "value": "Replace this node with Gmail / Slack / Teams to deliver the link to the approver.",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "32d77eff-49c5-5726-979b-2a0a44b01396",
+      "name": "Notify Approver (demo)",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1600,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "resume": "form",
+        "formTitle": "Discount approval",
+        "formDescription": "={{ 'Customer asked for ' + $('Decide').item.json.amounts.discount_pct + '% on ' + $('Decide').item.json.amounts.quantity + ' x ' + $('AI Extract').item.json.product.name + ' (list ' + $('Decide').item.json.amounts.subtotal + ' ' + $('Decide').item.json.amounts.currency + ', total at requested discount ' + $('Decide').item.json.amounts.total + '). ' + 'Required approver: ' + $('Decide').item.json.approval.required_role + '. ' + ($json.policy_message ? 'PREVIOUS ATTEMPT REFUSED: ' + $json.policy_message : '') }}",
+        "formFields": {
+          "values": [
+            {
+              "fieldLabel": "Decision",
+              "fieldType": "dropdown",
+              "requiredField": true,
+              "fieldOptions": {
+                "values": [
+                  {
+                    "option": "approve"
+                  },
+                  {
+                    "option": "modify"
+                  },
+                  {
+                    "option": "reject"
+                  }
+                ]
+              }
+            },
+            {
+              "fieldLabel": "Approved discount %",
+              "fieldType": "number"
+            },
+            {
+              "fieldLabel": "Your name",
+              "requiredField": true
+            },
+            {
+              "fieldLabel": "Comment",
+              "fieldType": "textarea"
+            }
+          ]
+        },
+        "limitWaitTime": true,
+        "limitType": "afterTimeInterval",
+        "resumeAmount": 48,
+        "resumeUnit": "hours",
+        "options": {}
+      },
+      "id": "2a7cfd0a-db22-5140-8fa9-e03d5d897aaa",
+      "name": "Approval Form",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1800,
+        160
+      ],
+      "webhookId": "ee82bee9-51c9-5495-b6ec-3b536ecae231"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "d0dead9b-6bf3-57b9-aedf-ff5d46ea13d2",
+              "leftValue": "={{ $json['Decision'] }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "c8053c3a-2af1-52ea-b3d5-a0a8a0c4a1f1",
+      "name": "Decision Submitted?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2000,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').item.json.api_base_url }}/v1/approvals/expire-due",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Request-ID",
+              "value": "={{ $('Config').item.json.request_id }}"
+            }
+          ]
+        }
+      },
+      "id": "6bbb4708-c2bf-57ed-9f1f-cda8e8a08115",
+      "name": "Expire Overdue Approvals",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        360
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').item.json.api_base_url }}/v1/approvals/{{ $('Decide').item.json.approval.approval_id }}/decision",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Request-ID",
+              "value": "={{ $('Config').item.json.request_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ action: $json['Decision'], token: $('Decide').item.json.approval_token, decided_by: $json['Your name'], comment: $json['Comment'] || null, approved_discount_pct: $json['Decision'] === 'modify' ? String($json['Approved discount %']) : null }) }}"
+      },
+      "id": "be3bbad3-0f01-5178-9f3e-040171f3a360",
+      "name": "Submit Decision",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2200,
+        60
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "72a3edb7-ad8f-521d-9437-76209ef929af",
+              "name": "policy_message",
+              "value": "={{ $json.error?.message || 'decision refused' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": false,
+        "options": {}
+      },
+      "id": "75fc4fea-1374-57c4-9924-6dd73d642b29",
+      "name": "Refused by Policy",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2400,
+        -120
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "3c76e717-9835-5510-b732-aaae9e3263cb",
+              "leftValue": "={{ ['approved','modified'].includes($json.approval.status) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "5df1a5ec-2ad2-53ca-96df-862e33e572e4",
+      "name": "Granted?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        60
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "e5728216-61b4-530a-bb9b-95d4568a092e",
+      "name": "Rejected by Approver",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2600,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').item.json.api_base_url }}/v1/inquiries/{{ $('Create Inquiry').item.json.inquiry_id }}/quote",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Request-ID",
+              "value": "={{ $('Config').item.json.request_id }}"
+            }
+          ]
+        }
+      },
+      "id": "b6a4e8be-48de-57e4-81c2-b40289cc302a",
+      "name": "Create Quote",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2800,
+        300
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').item.json.api_base_url }}/v1/quotes/{{ $json.quote_id }}/order",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Request-ID",
+              "value": "={{ $('Config').item.json.request_id }}"
+            }
+          ]
+        }
+      },
+      "id": "831fdf2b-1800-55eb-a54f-ec2e4fac344e",
+      "name": "Create Order",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3000,
+        300
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').item.json.api_base_url }}/v1/orders/{{ $json.order_id }}/invoice",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Request-ID",
+              "value": "={{ $('Config').item.json.request_id }}"
+            }
+          ]
+        }
+      },
+      "id": "0ff4a2e1-c218-542f-bba5-2f1bbdff3980",
+      "name": "Create Invoice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3200,
+        300
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').item.json.api_base_url }}/v1/invoices/{{ $json.invoice_id }}/validate",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Request-ID",
+              "value": "={{ $('Config').item.json.request_id }}"
+            }
+          ]
+        }
+      },
+      "id": "2ad904d9-4a70-58b6-a98c-d21dc3aab42f",
+      "name": "Validate Invoice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3400,
+        300
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "6310d0ad-bbfc-5582-a322-57ed22cd26ba",
+              "leftValue": "={{ $('AI Extract').item.json.extracted.appointment_requested }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "85de04bc-9976-56a3-afe0-52d8103e4d40",
+      "name": "Call Requested?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3600,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').item.json.api_base_url }}/v1/inquiries/{{ $('Create Inquiry').item.json.inquiry_id }}/appointment",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Request-ID",
+              "value": "={{ $('Config').item.json.request_id }}"
+            }
+          ]
+        }
+      },
+      "id": "f24e08d1-1cc6-50d5-bf9b-995ca88ed453",
+      "name": "Book Appointment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3800,
+        200
+      ],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $('Config').item.json.api_base_url }}/v1/inquiries/{{ $('Create Inquiry').item.json.inquiry_id }}/documents",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Request-ID",
+              "value": "={{ $('Config').item.json.request_id }}"
+            }
+          ]
+        }
+      },
+      "id": "1f8adc5b-06cd-50be-85e1-5aebad3baec3",
+      "name": "Consistency Check",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4000,
+        300
+      ],
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').item.json.api_base_url }}/v1/ops/workflow-failures",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Request-ID",
+              "value": "={{ $('Config').item.json.request_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ workflow: $workflow.name, stage: $prevNode.name, error: $json.error?.message || JSON.stringify($json.error || {}), execution_id: $execution.id, inquiry_id: $('Create Inquiry').item.json.inquiry_id }) }}"
+      },
+      "id": "08417f05-71b9-507a-97ab-1e3d5b543205",
+      "name": "Report Failure",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3400,
+        560
+      ],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Create Inquiry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Inquiry": {
+      "main": [
+        [
+          {
+            "node": "AI Extract",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Intake Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Extract": {
+      "main": [
+        [
+          {
+            "node": "Extracted?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Extraction Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extracted?": {
+      "main": [
+        [
+          {
+            "node": "Decide",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Needs Review",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decide": {
+      "main": [
+        [
+          {
+            "node": "Respond Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond Decision Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond Accepted": {
+      "main": [
+        [
+          {
+            "node": "Route by Outcome",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route by Outcome": {
+      "main": [
+        [
+          {
+            "node": "Create Quote",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify Approver (demo)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Closed (rejected or review)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Approver (demo)": {
+      "main": [
+        [
+          {
+            "node": "Approval Form",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approval Form": {
+      "main": [
+        [
+          {
+            "node": "Decision Submitted?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decision Submitted?": {
+      "main": [
+        [
+          {
+            "node": "Submit Decision",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Expire Overdue Approvals",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Submit Decision": {
+      "main": [
+        [
+          {
+            "node": "Granted?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Refused by Policy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refused by Policy": {
+      "main": [
+        [
+          {
+            "node": "Approval Form",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Granted?": {
+      "main": [
+        [
+          {
+            "node": "Create Quote",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Rejected by Approver",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Quote": {
+      "main": [
+        [
+          {
+            "node": "Create Order",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Order": {
+      "main": [
+        [
+          {
+            "node": "Create Invoice",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Invoice": {
+      "main": [
+        [
+          {
+            "node": "Validate Invoice",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Invoice": {
+      "main": [
+        [
+          {
+            "node": "Call Requested?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Report Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Requested?": {
+      "main": [
+        [
+          {
+            "node": "Book Appointment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Consistency Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Book Appointment": {
+      "main": [
+        [
+          {
+            "node": "Consistency Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "pinData": {}
+}

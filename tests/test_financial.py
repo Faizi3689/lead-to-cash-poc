@@ -13,8 +13,13 @@ def _post(client, path, key=None, **kw):
     return client.post(path, headers=headers, **kw)
 
 
+def _uid():
+    return uuid.uuid4().hex[:8]
+
+
 def _invoice(**over):
-    base = {"invoice_number": f"SUP-{uuid.uuid4().hex[:6]}", "counterparty_name": "Northwind Supplies",
+    # Unique supplier per test: results never depend on data already in the database.
+    base = {"invoice_number": f"SUP-{_uid()}", "counterparty_name": f"Northwind Supplies {_uid()}",
             "invoice_date": "2026-09-20", "currency": "USD", "subtotal": "1000.00", "discount_pct": "5",
             "discount_amount": "50.00", "tax_amount": "0.00", "total": "950.00"}
     base.update(over)
@@ -26,7 +31,9 @@ def _types(body):
 
 
 def _order_for_20_modified_to_12(client):
-    r = client.post("/v1/inquiries", json={"message": MSG_20},
+    uid = _uid()
+    r = client.post("/v1/inquiries", json={"message": MSG_20, "customer_name": f"Test Customer {uid}",
+                                           "customer_email": f"buyer-{uid}@test.example"},
                     headers={**API_HEADERS, "Idempotency-Key": f"f-{uuid.uuid4()}"})
     iid = r.json()["inquiry_id"]
     _post(client, f"/v1/inquiries/{iid}/extract")
@@ -112,7 +119,7 @@ def test_inbound_invoice_with_more_discount_than_approved(client):
 
 
 def test_duplicate_invoice_detected_but_retry_is_not(client):
-    inv = _invoice(invoice_number="SUP-DUP-1")
+    inv = _invoice()
     first = _post(client, "/v1/invoices", key="k-1", json=inv).json()
     retry = _post(client, "/v1/invoices", key="k-1", json=inv).json()        # network retry
     assert retry["replay"] is True and retry["entity_id"] == first["entity_id"]
@@ -125,14 +132,15 @@ def test_duplicate_invoice_detected_but_retry_is_not(client):
 
 
 def test_suspected_duplicate_with_new_number(client):
-    _post(client, "/v1/invoices", json=_invoice(counterparty_name="Contoso", total="950.00"))
-    body = _post(client, "/v1/invoices", json=_invoice(counterparty_name="Contoso", total="950.00")).json()
+    supplier = f"Contoso {_uid()}"
+    _post(client, "/v1/invoices", json=_invoice(counterparty_name=supplier, total="950.00"))
+    body = _post(client, "/v1/invoices", json=_invoice(counterparty_name=supplier, total="950.00")).json()
     assert _types(body) == ["duplicate_invoice"]
     assert body["open_exceptions"][0]["severity"] == "medium"
 
 
 def test_confirmed_duplicate_is_voided(client, db_session):
-    inv = _invoice(invoice_number="SUP-DUP-2")
+    inv = _invoice()
     _post(client, "/v1/invoices", json=inv)
     dup = _post(client, "/v1/invoices", json=inv).json()
     v = _post(client, f"/v1/invoices/{dup['entity_id']}/void",
@@ -202,39 +210,33 @@ def test_invalid_correction_payload_is_rejected(client):
 
 # ----------------------------------------------------------------------------- AI invoice capture
 
-INVOICE_TEXT = """Invoice No: SUP-7788
-From: Northwind Supplies
-Date: 2026-09-20
-Currency: USD
-Subtotal: 1,000.00
-Discount (5%): -50.00
-Tax: 0.00
-Total Due: 950.00"""
+def invoice_text(number=None, supplier=None, discount="Discount (5%): -50.00", total="950.00"):
+    return (f"Invoice No: {number or 'SUP-' + _uid().upper()}\nFrom: {supplier or 'Northwind ' + _uid()}\n"
+            f"Date: 2026-09-20\nCurrency: USD\nSubtotal: 1,000.00\n{discount}\nTax: 0.00\nTotal Due: {total}")
 
 
 def test_ai_reads_invoice_text_and_it_is_validated(client, db_session):
-    body = _post(client, "/v1/invoices/from-text", json={"raw_text": INVOICE_TEXT}).json()
+    body = _post(client, "/v1/invoices/from-text", json={"raw_text": invoice_text(number="SUP-7788")}).json()
     assert body["ai"]["outcome"] == "extracted"
     assert body["document"]["invoice_number"] == "SUP-7788" and body["document"]["total"] == "950.00"
     assert body["document"]["source"] == "ai_extracted" and body["status"] == "validated"
 
 
 def test_ai_extracted_invoice_still_gets_business_checks(client):
-    text_20 = INVOICE_TEXT.replace("SUP-7788", "SUP-7789").replace("Discount (5%): -50.00", "Discount (20%): -200.00") \
-        .replace("950.00", "800.00")
+    text_20 = invoice_text(discount="Discount (20%): -200.00", total="800.00")
     body = _post(client, "/v1/invoices/from-text", json={"raw_text": text_20}).json()
     assert body["status"] == "blocked" and "unauthorized_discount" in _types(body)
 
 
 def test_ai_outage_during_capture_goes_to_review(client):
-    body = _post(client, "/v1/invoices/from-text", json={"raw_text": INVOICE_TEXT + "\n[[mock:timeout]]"}).json()
+    body = _post(client, "/v1/invoices/from-text", json={"raw_text": invoice_text() + "\n[[mock:timeout]]"}).json()
     assert body["ai"]["outcome"] == "needs_review" and body["status"] == "blocked"
     assert set(_types(body)) >= {"llm_unavailable", "missing_field"}
     # Revalidating does not hide the outage: only a human entering the data clears it.
     again = _post(client, f"/v1/invoices/{body['entity_id']}/validate").json()
     assert "llm_unavailable" in _types(again)
     fixed = _post(client, f"/v1/invoices/{body['entity_id']}/correct", json={
-        "changes": {"invoice_number": "SUP-7790", "counterparty_name": "Northwind Supplies",
+        "changes": {"invoice_number": f"SUP-{_uid()}", "counterparty_name": f"Northwind {_uid()}",
                     "invoice_date": "2026-09-20", "currency": "USD", "subtotal": "1000.00",
                     "discount_pct": "5", "discount_amount": "50.00", "tax_amount": "0.00", "total": "950.00"},
         "corrected_by": "fiona.finance", "reason": "typed in from the PDF"}).json()
@@ -244,7 +246,7 @@ def test_ai_outage_during_capture_goes_to_review(client):
 # ----------------------------------------------------------------------------- expenses
 
 def _expense(**over):
-    base = {"employee_name": "Ali Raza", "category": "travel", "amount": "120.00", "currency": "USD",
+    base = {"employee_name": f"Ali Raza {_uid()}", "category": "travel", "amount": "120.00", "currency": "USD",
             "expense_date": "2026-09-18", "description": "Taxi to client", "receipt_ref": "rcpt-001.jpg"}
     base.update(over)
     return base
@@ -271,8 +273,9 @@ def test_expense_over_threshold_and_missing_receipt(client):
 
 
 def test_duplicate_expense_claim(client):
-    _post(client, "/v1/expenses", json=_expense(amount="75.00"))
-    dup = _post(client, "/v1/expenses", json=_expense(amount="75.00")).json()
+    employee = f"Ali Raza {_uid()}"
+    _post(client, "/v1/expenses", json=_expense(employee_name=employee, amount="75.00"))
+    dup = _post(client, "/v1/expenses", json=_expense(employee_name=employee, amount="75.00")).json()
     assert _types(dup) == ["duplicate_invoice"]
     rej = _post(client, f"/v1/expenses/{dup['entity_id']}/reject",
                 json={"by": "mark.manager", "reason": "claimed twice"}).json()
@@ -292,3 +295,23 @@ def test_exception_queue_lists_open_items(client):
     queue = client.get("/v1/exceptions", headers=API_HEADERS, params={"entity_type": "invoice"}).json()
     assert any(e["entity_id"] == body["entity_id"] for e in queue)
     assert all(e["status"] == "open" for e in queue)
+
+
+def test_invoices_for_different_orders_are_not_duplicates(client):
+    """Same customer, same amount, same day - but two separate orders: both are legitimate."""
+    uid = _uid()
+    invoices = []
+    for _ in range(2):
+        r = client.post("/v1/inquiries", json={"message": "Please send 100 units of Product X with 3% discount.",
+                                               "customer_name": f"Repeat Buyer {uid}",
+                                               "customer_email": f"repeat-{uid}@test.example"},
+                        headers={**API_HEADERS, "Idempotency-Key": f"rb-{uuid.uuid4()}"})
+        iid = r.json()["inquiry_id"]
+        _post(client, f"/v1/inquiries/{iid}/extract")
+        _post(client, f"/v1/inquiries/{iid}/decide")
+        q = _post(client, f"/v1/inquiries/{iid}/quote").json()
+        o = _post(client, f"/v1/quotes/{q['quote_id']}/order").json()
+        invoices.append(_post(client, f"/v1/orders/{o['order_id']}/invoice").json())
+    for inv in invoices:
+        v = _post(client, f"/v1/invoices/{inv['invoice_id']}/validate").json()
+        assert v["status"] == "validated", v["open_exceptions"]

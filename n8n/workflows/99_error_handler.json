@@ -1,0 +1,112 @@
+{
+  "name": "99 - Error Handler",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "672d2e91-c096-594a-be35-29e79333554d",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "9a589865-18bd-5a0d-ba9f-6907b5097fe9",
+              "name": "api_base_url",
+              "value": "https://lead-to-cash-api.onrender.com",
+              "type": "string"
+            },
+            {
+              "id": "e8c2dd20-29e3-5cc8-9a3c-f768387bf87c",
+              "name": "request_id",
+              "value": "=n8n-{{ $execution.id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "id": "3251febf-f9cd-5a68-92bc-a9c848ae8d0d",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        200,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').item.json.api_base_url }}/v1/ops/workflow-failures",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Request-ID",
+              "value": "={{ $('Config').item.json.request_id }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ workflow: $('Error Trigger').item.json.workflow.name, stage: $('Error Trigger').item.json.execution.lastNodeExecuted, error: $('Error Trigger').item.json.execution.error?.message, execution_id: String($('Error Trigger').item.json.execution.id || ''), execution_url: $('Error Trigger').item.json.execution.url }) }}"
+      },
+      "id": "16abfde2-304f-5649-ab08-d52f06277831",
+      "name": "Record Failure",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        400,
+        0
+      ],
+      "onError": "continueRegularOutput",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    }
+  ],
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Record Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "saveDataErrorExecution": "all",
+    "saveDataSuccessExecution": "all"
+  },
+  "pinData": {}
+}

@@ -140,9 +140,13 @@ def invoice_findings(db: Session, inv: Invoice) -> list[checks.Finding]:
             func.upper(Invoice.invoice_number) == inv.invoice_number.strip().upper())).scalars().all()
     suspected = []
     if not exact and inv.counterparty_name and inv.total is not None and inv.invoice_date:
-        suspected = db.execute(others.where(
+        candidates = others.where(
             func.lower(Invoice.counterparty_name) == inv.counterparty_name.strip().lower(),
-            Invoice.total == inv.total, Invoice.invoice_date == inv.invoice_date)).scalars().all()
+            Invoice.total == inv.total, Invoice.invoice_date == inv.invoice_date)
+        if inv.order_id:
+            # Invoices for two different orders can legitimately have the same amount on the same day.
+            candidates = candidates.where((Invoice.order_id.is_(None)) | (Invoice.order_id == inv.order_id))
+        suspected = db.execute(candidates).scalars().all()
     findings += checks.duplicates(
         [{"id": str(m.id), "ref": m.invoice_number or str(m.id)} for m in exact],
         [{"id": str(m.id), "ref": m.invoice_number or str(m.id)} for m in suspected])
