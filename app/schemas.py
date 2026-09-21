@@ -1,6 +1,6 @@
 """API request/response contracts. Validation happens here, before anything touches the database."""
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -178,3 +178,97 @@ class AppointmentOut(BaseModel):
     timezone: str
     external_ref: str | None
     replay: bool = False
+
+
+class LineItemIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    description: str | None = Field(default=None, max_length=300)
+    sku: str | None = Field(default=None, max_length=50)
+    quantity: Decimal | None = Field(default=None, ge=0)
+    unit_price: Decimal | None = Field(default=None, ge=0)
+    line_total: Decimal | None = None
+
+
+class InvoiceIn(BaseModel):
+    """Every field is optional on purpose: missing data is detected and flagged, not rejected."""
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    invoice_number: str | None = Field(default=None, max_length=100)
+    counterparty_name: str | None = Field(default=None, max_length=200)
+    order_reference: str | None = Field(default=None, max_length=100)
+    invoice_date: date | None = None
+    due_date: date | None = None
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    subtotal: Decimal | None = Field(default=None, ge=0, decimal_places=2)
+    discount_pct: Decimal | None = Field(default=None, ge=0, le=100, decimal_places=2)
+    discount_amount: Decimal | None = Field(default=None, ge=0, decimal_places=2)
+    tax_amount: Decimal | None = Field(default=None, ge=0, decimal_places=2)
+    total: Decimal | None = Field(default=None, ge=0, decimal_places=2)
+    line_items: list[LineItemIn] | None = None
+
+    @field_validator("currency")
+    @classmethod
+    def _upper(cls, v: str | None) -> str | None:
+        return v.upper() if v else v
+
+
+class InvoiceTextIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    raw_text: str = Field(min_length=10, max_length=20000)
+
+
+class ExpenseIn(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    expense_ref: str | None = Field(default=None, max_length=100)
+    employee_name: str | None = Field(default=None, max_length=200)
+    category: str | None = Field(default=None, max_length=100)
+    amount: Decimal | None = Field(default=None, ge=0, decimal_places=2)
+    currency: str | None = Field(default=None, min_length=3, max_length=3)
+    expense_date: date | None = None
+    description: str | None = Field(default=None, max_length=1000)
+    receipt_ref: str | None = Field(default=None, max_length=300)
+
+    @field_validator("currency")
+    @classmethod
+    def _upper(cls, v: str | None) -> str | None:
+        return v.upper() if v else v
+
+
+class CorrectionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    changes: dict = Field(description="Fields to change, e.g. {\"discount_pct\": \"12.00\"}")
+    corrected_by: str = Field(min_length=2, max_length=100)
+    reason: str = Field(min_length=3, max_length=1000)
+
+
+class ActorIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    by: str = Field(min_length=2, max_length=100)
+    reason: str | None = Field(default=None, max_length=1000)
+
+
+class ExceptionOut(BaseModel):
+    exception_id: uuid.UUID
+    entity_type: str
+    entity_id: uuid.UUID
+    exception_type: str
+    severity: str
+    status: str
+    message: str | None = None
+    details: dict = {}
+    assigned_role: str | None = None
+    overridable: bool = False
+    resolved_by: str | None = None
+    resolution: dict | None = None
+    created_at: datetime
+
+
+class ValidationOut(BaseModel):
+    entity_type: str
+    entity_id: uuid.UUID
+    status: str
+    replay: bool = False
+    open_exceptions: list[ExceptionOut] = []
+    document: dict = {}
+    ai: dict | None = None

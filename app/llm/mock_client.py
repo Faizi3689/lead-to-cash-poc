@@ -20,12 +20,53 @@ _WHEN = re.compile(r"\b(today|tomorrow|next week|monday|tuesday|wednesday|thursd
 _DELIVERY = re.compile(r"\b(next (?:week|month|quarter)|asap|this month)\b", re.I)
 
 
+_INV_NO = re.compile(r"invoice\s*(?:no\.?|number|#)\s*[:#]?\s*([A-Z0-9][A-Z0-9-]*)", re.I)
+_INV_FROM = re.compile(r"^(?:from|supplier|vendor|bill from)\s*:\s*(.+)$", re.I | re.M)
+_INV_ORDER = re.compile(r"(?:order|po)\s*(?:no\.?|number|ref(?:erence)?|#)?\s*[:#]?\s*((?:SO|PO)-?\d+)", re.I)
+_INV_DATE = re.compile(r"(\d{4}-\d{2}-\d{2})")
+_INV_CUR = re.compile(r"\b(USD|SGD|PKR|EUR|GBP)\b")
+_AMOUNT = r"([\d,]+\.\d{2})"
+_INV_SUB = re.compile(r"sub\s*-?total\s*:\s*" + _AMOUNT, re.I)
+_INV_DPCT = re.compile(r"discount\s*\(?\s*(\d+(?:\.\d+)?)\s*%", re.I)
+_INV_DAMT = re.compile(r"discount[^\n:]*:\s*-?\s*" + _AMOUNT, re.I)
+_INV_TAX = re.compile(r"(?:tax|gst|vat)[^\n:]*:\s*" + _AMOUNT, re.I)
+_INV_TOTAL = re.compile(r"(?<!sub)(?<!sub-)(?<!sub )\btotal(?:\s*due)?\s*:\s*" + _AMOUNT, re.I)
+
+
+def _num(match):
+    return float(match.group(1).replace(",", "")) if match else None
+
+
+def _mock_invoice(text: str) -> dict:
+    number, total = _INV_NO.search(text), _INV_TOTAL.search(text)
+    supplier = _INV_FROM.search(text)
+    return {
+        "invoice_number": number.group(1) if number else None,
+        "counterparty_name": supplier.group(1).strip() if supplier else None,
+        "order_reference": (m.group(1).upper() if (m := _INV_ORDER.search(text)) else None),
+        "invoice_date": (m.group(1) if (m := _INV_DATE.search(text)) else None),
+        "currency": (m.group(1) if (m := _INV_CUR.search(text)) else None),
+        "subtotal": _num(_INV_SUB.search(text)),
+        "discount_pct": _num(_INV_DPCT.search(text)),
+        "discount_amount": _num(_INV_DAMT.search(text)),
+        "tax_amount": _num(_INV_TAX.search(text)),
+        "total": _num(total),
+        "confidence": 0.9 if (number and total) else 0.5,
+    }
+
+
 class MockLLMClient:
     provider = "mock"
     model = "mock-extractor-v1"
 
     def complete_json(self, messages: list[dict[str, str]]) -> LLMResponse:
         message = messages[-1]["content"]
+        if messages[0]["content"].startswith("INVOICE_EXTRACTION"):
+            user = next(m["content"] for m in messages if m["role"] == "user")
+            inv_text = (re.search(r"<<<\n(.*)\n>>>", user, re.S) or [None, user])[1]
+            if "[[mock:timeout]]" in inv_text:
+                raise LLMUnavailable("mock timeout", kind="timeout")
+            return LLMResponse(text=json.dumps(_mock_invoice(inv_text)), model=self.model, latency_ms=5)
         # Only look at the customer text inside the delimiters of the first user turn.
         first_user = next(m["content"] for m in messages if m["role"] == "user")
         match = re.search(r"<<<\n(.*)\n>>>", first_user, re.S)

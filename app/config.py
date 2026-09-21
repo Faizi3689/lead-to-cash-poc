@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     invoice_due_days: int = 30
     mock_calendar_fail: bool = False        # simulate the calendar service being down
 
+    invoice_approval_threshold: float = 100000   # invoices above this need finance sign-off
+    expense_approval_threshold: float = 1000     # expenses above this need manager sign-off
+    receipt_required_above: float = 25           # expenses above this need a receipt
+
     @field_validator("database_url")
     @classmethod
     def _use_psycopg3_driver(cls, v: str) -> str:

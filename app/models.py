@@ -238,6 +238,27 @@ class Invoice(Base):
     raw_text: Mapped[str | None] = mapped_column(Text)
     fingerprint: Mapped[str | None] = mapped_column(Text)
     terms_hash: Mapped[str | None] = mapped_column(Text)
+    idempotency_key: Mapped[str | None] = mapped_column(Text)
+    order_reference: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(Text, server_default=text("'received'"))
+    created_at: Mapped[datetime] = mapped_column(server_default=NOW)
+    updated_at: Mapped[datetime] = mapped_column(server_default=NOW)
+
+
+class Expense(Base):
+    __tablename__ = "expenses"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), **UUID_PK)
+    expense_ref: Mapped[str | None] = mapped_column(Text)
+    employee_name: Mapped[str | None] = mapped_column(Text)
+    category: Mapped[str | None] = mapped_column(Text)
+    amount: Mapped[Decimal | None] = mapped_column(Numeric(14, 2))
+    currency: Mapped[str | None] = mapped_column(String(3))
+    expense_date: Mapped[date | None] = mapped_column(Date)
+    description: Mapped[str | None] = mapped_column(Text)
+    receipt_ref: Mapped[str | None] = mapped_column(Text)
+    idempotency_key: Mapped[str | None] = mapped_column(Text)
+    fingerprint: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, server_default=text("'submitted'"))
     created_at: Mapped[datetime] = mapped_column(server_default=NOW)
     updated_at: Mapped[datetime] = mapped_column(server_default=NOW)

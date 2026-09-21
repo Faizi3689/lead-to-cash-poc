@@ -62,3 +62,26 @@ def grounding_issues(data: ExtractedInquiry, source_text: str) -> list[str]:
     if data.requested_discount_pct is not None and not _number_in_text(data.requested_discount_pct, source_text):
         issues.append(f"discount {data.requested_discount_pct}% does not appear in the message")
     return issues
+
+
+class GenericParseResult(BaseModel):
+    ok: bool
+    data: object | None = None
+    parsed_json: dict | None = None
+    errors: list[str] = []
+
+
+def parse_json_model(raw: str, model: type[BaseModel]) -> GenericParseResult:
+    """Same guardrails as parse_and_validate, for any pydantic model."""
+    text = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip())
+    try:
+        obj = json.loads(text)
+    except json.JSONDecodeError as exc:
+        return GenericParseResult(ok=False, errors=[f"output is not valid JSON ({exc.msg})"])
+    if not isinstance(obj, dict):
+        return GenericParseResult(ok=False, errors=["output must be a JSON object"])
+    try:
+        return GenericParseResult(ok=True, data=model.model_validate(obj), parsed_json=obj)
+    except ValidationError as exc:
+        return GenericParseResult(ok=False, parsed_json=obj, errors=[
+            f"{'.'.join(str(p) for p in e['loc']) or 'object'}: {e['msg']}" for e in exc.errors()])
