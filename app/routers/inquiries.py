@@ -6,9 +6,11 @@ from sqlalchemy.orm import Session
 from app.db import get_db
 from app.llm.base import LLMClient, LLMUnavailable
 from app.llm.factory import get_llm_client
-from app.schemas import ErrorOut, ExtractionOut, InquiryCreate, InquiryOut, ProductOut
+from app.schemas import (AmountsOut, DecisionOut, ErrorOut, ExtractionOut, InquiryCreate, InquiryOut,
+                         ProductOut)
 from app.security import require_api_key
-from app.services import extraction_service, inquiry_service
+from app.rules import engine as rules_engine
+from app.services import approval_service, extraction_service, inquiry_service
 
 router = APIRouter(prefix="/v1/inquiries", tags=["inquiries"], dependencies=[Depends(require_api_key)])
 
@@ -95,4 +97,35 @@ def extract(inquiry_id: uuid.UUID, db: Session = Depends(get_db),
         extracted=result.inquiry.extracted,
         review_reasons=result.reasons,
         exception_ids=result.exception_ids,
+    )
+
+
+@router.post(
+    "/{inquiry_id}/decide",
+    response_model=DecisionOut,
+    responses={404: {"model": ErrorOut},
+               409: {"model": ErrorOut, "description": "Extraction has not completed successfully"}},
+)
+def decide(inquiry_id: uuid.UUID, db: Session = Depends(get_db)) -> DecisionOut:
+    """Run the deterministic discount rules and create the approval record. Safe to call twice."""
+    from app.routers.approvals import approval_out
+
+    try:
+        result = approval_service.run_rules(db, inquiry_id)
+    except approval_service.InquiryNotFound:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Inquiry not found")
+    except approval_service.NotDecidable as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+
+    return DecisionOut(
+        inquiry_id=result.inquiry.id,
+        status=result.inquiry.status,
+        outcome=result.outcome,
+        rule_version=rules_engine.RULE_VERSION,
+        reasons=result.reasons,
+        replay=result.replay,
+        approval=approval_out(result.approval) if result.approval else None,
+        approval_token=result.approval_token,
+        amounts=AmountsOut(**result.amounts.as_dict()) if result.amounts else None,
+        exception_ids=result.exception_ids or [],
     )

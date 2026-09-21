@@ -12,15 +12,16 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.config import get_settings
 from app.logging_config import setup_logging
 from app.request_context import request_id_var
-from app.routers import inquiries
+from app.routers import approvals, inquiries
 from app.security import require_api_key
 
 settings = get_settings()
 setup_logging(settings.log_level)
 log = logging.getLogger("app")
 
-app = FastAPI(title="Lead-to-Cash PoC", version="0.2.0")
+app = FastAPI(title="Lead-to-Cash PoC", version="0.3.0")
 app.include_router(inquiries.router)
+app.include_router(approvals.router)
 
 _SAFE_REQUEST_ID = re.compile(r"^[A-Za-z0-9._:-]{1,100}$")
 

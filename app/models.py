@@ -118,3 +118,39 @@ class ExceptionRecord(Base):
     resolved_at: Mapped[datetime | None] = mapped_column()
     created_at: Mapped[datetime] = mapped_column(server_default=NOW)
     updated_at: Mapped[datetime] = mapped_column(server_default=NOW)
+
+
+class RuleDecision(Base):
+    __tablename__ = "rule_decisions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), **UUID_PK)
+    inquiry_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("inquiries.id"))
+    ai_run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("ai_runs.id"))
+    rule_version: Mapped[str] = mapped_column(Text)
+    inputs: Mapped[dict] = mapped_column(JSONB)
+    outcome: Mapped[str] = mapped_column(Text)
+    reasons: Mapped[list] = mapped_column(JSONB, server_default=text("'[]'"))
+    created_at: Mapped[datetime] = mapped_column(server_default=NOW)
+
+
+class Approval(Base):
+    __tablename__ = "approvals"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), **UUID_PK)
+    inquiry_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("inquiries.id"))
+    rule_decision_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("rule_decisions.id"))
+    required_role: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(Text, server_default=text("'pending'"))
+    product_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("products.id"))
+    quantity: Mapped[int] = mapped_column(Integer)
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2))
+    requested_discount_pct: Mapped[Decimal] = mapped_column(Numeric(5, 2))
+    approved_discount_pct: Mapped[Decimal | None] = mapped_column(Numeric(5, 2))
+    terms_hash: Mapped[str | None] = mapped_column(Text)
+    decided_by: Mapped[str | None] = mapped_column(Text)
+    decision_comment: Mapped[str | None] = mapped_column(Text)
+    token_hash: Mapped[str | None] = mapped_column(Text)
+    expires_at: Mapped[datetime | None] = mapped_column()
+    decided_at: Mapped[datetime | None] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(server_default=NOW)
+    updated_at: Mapped[datetime] = mapped_column(server_default=NOW)
