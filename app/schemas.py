@@ -165,6 +165,8 @@ class InvoiceOut(BaseModel):
     currency: str | None
     line_items: list = []
     terms_hash: str | None = None
+    payment_status: str | None = None
+    amount_paid: str | None = None
     replay: bool = False
 
 
@@ -272,3 +274,18 @@ class ValidationOut(BaseModel):
     open_exceptions: list[ExceptionOut] = []
     document: dict = {}
     ai: dict | None = None
+
+
+class PaymentIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    by: str = Field(min_length=2, max_length=100)
+    amount: Decimal | None = Field(default=None, gt=0, decimal_places=2,
+                                   description="Omit to settle the full outstanding amount")
+    reference: str | None = Field(default=None, max_length=200)
+
+
+class ExplanationIn(BaseModel):
+    """Plain-English explanation written by the AI in n8n. Advisory only - it changes no status."""
+    model_config = ConfigDict(extra="forbid")
+    explanation: str = Field(min_length=5, max_length=4000)
+    source: str = Field(default="ai:n8n", max_length=100)

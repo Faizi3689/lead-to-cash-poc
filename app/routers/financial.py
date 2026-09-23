@@ -11,8 +11,8 @@ from app.llm.base import LLMClient
 from app.models import ExceptionRecord, Expense, Invoice
 from app.routers.inquiries import _llm_or_none, _UnavailableLLM
 from app.rules.financial_checks import OVERRIDABLE
-from app.schemas import (ActorIn, CorrectionIn, ErrorOut, ExceptionOut, ExpenseIn, InvoiceIn, InvoiceTextIn,
-                         ValidationOut)
+from app.schemas import (ActorIn, CorrectionIn, ErrorOut, ExceptionOut, ExpenseIn, ExplanationIn, InvoiceIn,
+                         InvoiceTextIn, PaymentIn, ValidationOut)
 from app.security import require_api_key
 from app.services import exception_service
 from app.services import financial_service as fin
@@ -37,7 +37,8 @@ def _doc(obj, fields) -> dict:
         out[f] = v if isinstance(v, (list, dict, type(None))) else str(v)
     if isinstance(obj, Invoice):
         out.update(direction=obj.direction, source=obj.source,
-                   order_id=str(obj.order_id) if obj.order_id else None)
+                   order_id=str(obj.order_id) if obj.order_id else None,
+                   payment_status=obj.payment_status, amount_paid=str(obj.amount_paid))
     return out
 
 
@@ -123,6 +124,22 @@ def approve_invoice(invoice_id: uuid.UUID, payload: ActorIn, db: Session = Depen
 def void_invoice(invoice_id: uuid.UUID, payload: ActorIn, db: Session = Depends(get_db)):
     invoice = _call(fin.void_invoice, db, invoice_id, payload.by, payload.reason or "voided")
     return _out("invoice", invoice, [])
+
+
+@router.post("/v1/invoices/{invoice_id}/payment", response_model=ValidationOut, responses=ERR)
+def record_payment(invoice_id: uuid.UUID, payload: PaymentIn, db: Session = Depends(get_db)):
+    """Record a payment. Only an approved invoice can be paid (checked again by a database trigger)."""
+    invoice = _call(fin.record_payment, db, invoice_id, paid_by=payload.by, amount=payload.amount,
+                    reference=payload.reference)
+    return _out("invoice", invoice, [])
+
+
+@router.post("/v1/exceptions/{exception_id}/explanation", response_model=ExceptionOut, responses=ERR)
+def attach_explanation(exception_id: uuid.UUID, payload: ExplanationIn, db: Session = Depends(get_db)):
+    """Attach an AI-written explanation to a finding (used by the OpenAI node in n8n workflow 03).
+    Advisory only: the AI can describe an exception but never resolve or downgrade it."""
+    record = _call(fin.attach_explanation, db, exception_id, payload.explanation, payload.source)
+    return exception_out(record)
 
 
 # ------------------------------------------------------------------ expenses

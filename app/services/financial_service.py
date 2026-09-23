@@ -257,6 +257,61 @@ def void_invoice(db: Session, invoice_id: uuid.UUID, voided_by: str, reason: str
     return inv
 
 
+def record_payment(db: Session, invoice_id: uuid.UUID, *, paid_by: str, amount: Decimal | None,
+                   reference: str | None) -> Invoice:
+    """Mark an approved invoice as (partially) paid. Money never moves on a blocked invoice."""
+    inv = db.execute(select(Invoice).where(Invoice.id == invoice_id).with_for_update()).scalar_one_or_none()
+    if inv is None:
+        raise NotFound("invoice not found")
+    if inv.status not in ("approved", "posted"):
+        db.rollback()
+        raise NotAllowed(f"invoice is '{inv.status}'; only an approved invoice can be paid")
+    if inv.total is None:
+        db.rollback()
+        raise NotAllowed("invoice has no total")
+    outstanding = pricing.money(inv.total - (inv.amount_paid or Decimal("0")))
+    if outstanding <= 0:
+        return inv
+    value = pricing.money(amount) if amount is not None else outstanding
+    if value <= 0 or value > outstanding:
+        db.rollback()
+        raise NotAllowed(f"payment {value} must be between 0 and the outstanding {outstanding}")
+
+    before = {"payment_status": inv.payment_status, "amount_paid": str(inv.amount_paid)}
+    inv.amount_paid = pricing.money((inv.amount_paid or Decimal("0")) + value)
+    fully_paid = inv.amount_paid >= inv.total
+    inv.payment_status = "paid" if fully_paid else "partially_paid"
+    inv.payment_reference = reference or inv.payment_reference
+    if fully_paid:
+        inv.paid_at = datetime.now(timezone.utc)
+        inv.status = "posted"
+    try:
+        db.flush()          # the DB trigger re-checks approval state and the amount
+    except DBAPIError as exc:
+        db.rollback()
+        raise NotAllowed(str(getattr(exc, "orig", exc)).split("\n")[0]) from exc
+    audit.record(db, action="invoice.payment_recorded", entity_type="invoice", entity_id=inv.id,
+                 actor=f"user:{paid_by}", before=before,
+                 after={"payment_status": inv.payment_status, "amount_paid": str(inv.amount_paid),
+                        "payment": str(value), "reference": reference})
+    db.commit()
+    return inv
+
+
+def attach_explanation(db: Session, exception_id: uuid.UUID, text_: str, source: str):
+    """Store an AI-written, human-readable explanation of a finding. Advisory only: it never
+    changes the status of the exception or of the document."""
+    record = db.get(ExceptionRecord, exception_id)
+    if record is None:
+        raise NotFound("exception not found")
+    record.ai_explanation = text_[:4000]
+    audit.record(db, action="exception.explained", entity_type="exception", entity_id=record.id,
+                 actor=source, after={"explanation": record.ai_explanation},
+                 meta={"advisory_only": True})
+    db.commit()
+    return record
+
+
 # --------------------------------------------------------------------------- expenses
 
 def expense_fingerprint(e: Expense) -> str:

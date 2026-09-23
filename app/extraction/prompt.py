@@ -1,9 +1,11 @@
 """Prompt for inquiry extraction. Versioned: every ai_run records which version produced it."""
-PROMPT_VERSION = "inquiry-extract-v1"
+PROMPT_VERSION = "inquiry-extract-v2"
 
 SYSTEM_PROMPT = """You extract structured data from B2B customer purchase inquiries.
 
 Return ONLY one JSON object with exactly these keys:
+  "contact_name": string or null   - the person writing, if they name themselves
+  "contact_email": string or null  - an email address written in the message
   "product_name": string or null   - the product as the customer wrote it
   "quantity": integer or null      - number of units requested
   "requested_discount_pct": number or null - discount percentage the customer asks for (e.g. "20% off" -> 20)

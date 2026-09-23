@@ -17,10 +17,12 @@ deterministic code and by people, and Postgres itself refuses any document that 
 | Database | Supabase Postgres (plain Postgres connection; triggers, constraints, RLS) |
 | AI | OpenAI (`gpt-4o-mini`), switchable to a deterministic mock for tests and failure simulation |
 | Hosting | Render (API), n8n Cloud (workflows) |
-| Tests | 128 automated tests (`pytest`) |
+| Tests | 134 automated tests (`pytest`) |
 
 Architecture, diagrams and control matrix: **[docs/architecture.md](docs/architecture.md)**.
 Live-review script and failure injection: **[docs/demo_checklist.md](docs/demo_checklist.md)**.
+Requirement-by-requirement coverage: **[docs/requirements_coverage.md](docs/requirements_coverage.md)**.
+API contract: **[api/openapi.json](api/openapi.json)** (regenerate with `python -m scripts.export_openapi`).
 n8n setup: **[n8n/README.md](n8n/README.md)**.
 
 ---
@@ -101,6 +103,7 @@ reviewer can read and change them in one place, and they are versioned in every 
 |---|---|---|
 | Inquiry extraction | message -> product, quantity, discount, timing, appointment wish, confidence | strict JSON schema; up to 3 attempts with error feedback; every number must appear in the message (hallucination check); product matched deterministically; confidence threshold; message treated as untrusted data (prompt-injection safe) |
 | Invoice capture | invoice text -> invoice fields | same schema + grounding approach; result goes through the same deterministic checks as a manual invoice |
+| Exception explanation (OpenAI node in n8n workflow 03) | plain-English explanation of why an invoice was blocked, for the finance officer | stored in `exceptions.ai_explanation` as **advisory text only**; it cannot change a status, clear a finding or release a payment |
 
 The AI never approves, prices, discounts or clears an exception. When it is unavailable or unsure, the item is
 stored and routed to a person with an exception; a later re-run can clear only system failures
@@ -136,19 +139,21 @@ of the same invoice is stored and flagged.
 | Unhandled workflow error | n8n error workflow 99 records it in the audit log |
 
 ## 8. Security
-**In this PoC:** API key on all business endpoints (constant-time comparison); secrets only in environment
-variables (never in code, repo or workflow exports); Supabase RLS enabled on every table with no policies, so the
-public Supabase REST API exposes nothing; approval tokens are random, single-use in effect, expiring, and stored
-only as hashes; strict request validation (`extra="forbid"`, length and range limits); errors never leak internals
-(full detail only in server logs, tied to a `request_id`); append-only audit log; the LLM receives only the message
-text, treated as data.
+The brief asks how each of these would be addressed in production; the table maps its ten points to what exists
+today and what production would add.
 
-**Production approach (not implemented here):** per-client credentials or OAuth2/OIDC with roles instead of one
-shared key, and approver identity from SSO rather than a typed name; secrets in a vault with rotation; a
-least-privilege database role for the service instead of the owner role; network restrictions (private
-networking / IP allow-lists between n8n and the API); rate limiting and request size limits at the edge; PII
-minimisation and retention rules for messages and AI logs, plus a data-processing agreement with the LLM
-provider; signed webhooks from upstream systems; monitoring and alerting on the exception queue and error rates.
+| Concern | In this PoC | In production |
+|---|---|---|
+| Authentication | Shared API key in `X-API-Key`, compared in constant time; approval links carry a random, hashed, expiring token | OAuth2/OIDC service-to-service tokens; approver identity from SSO instead of a typed name |
+| Authorization | Role limits enforced server-side (salesperson ≤15%, manager ≤40%); overridable vs non-overridable exceptions | Role-based access per endpoint, mapped to SSO groups; segregation of duties (the person who corrects an invoice cannot approve it) |
+| API security | HTTPS only, strict schemas (`extra="forbid"`, length/range limits), idempotency keys, uniform error envelope that never leaks internals | Rate limiting and payload size limits at the edge (WAF/gateway), signed webhooks from upstream systems, IP allow-listing between n8n and the API |
+| Secrets / credentials | Only in environment variables (`.env` local, Render env, n8n credential); `.env` is git-ignored; workflow exports contain no credentials; rotation exercised during development | Secrets manager (Vault / AWS Secrets Manager) with automatic rotation and per-environment scoping |
+| Customer data | Minimal data stored (name, email, company, message); Supabase RLS blocks the public REST API; no data is sent anywhere except the LLM call | PII minimisation and retention policy, encryption at rest with customer-managed keys, data-processing agreement with the LLM provider, right-to-erasure process |
+| Financial information | Amounts derived from the approval only; DB triggers prevent unapproved terms; payments only on approved invoices; append-only audit | Segregation of duties, four-eyes principle above thresholds, reconciliation against the accounting system |
+| Sensitive logging | Structured logs carry a `request_id`, never secrets; settings marked `repr=False`; errors logged server-side only | Redaction of message content and PII in logs, central log store with restricted access and retention limits |
+| Environment separation | Local (mock LLM, own `.env`) and hosted (Render + Supabase) are separate; a separate test database is recommended and supported via `TEST_DATABASE_URL` | Dedicated dev / staging / production projects with separate databases, keys, n8n instances and deploy approvals |
+| Role-based access | Approval authority by role in the rules engine; exception overrides restricted by type | Full RBAC in the API and in n8n (who may edit or run workflows), audited role changes |
+| Downstream credentials | One credential per system, held by n8n or the service, never in code or exports | Least-privilege service accounts per integration, short-lived credentials, per-tenant isolation |
 
 ## 9. API overview
 | Method | Path | Purpose |
@@ -163,9 +168,9 @@ provider; signed webhooks from upstream systems; monitoring and alerting on the 
 | GET | `/v1/inquiries/{id}/documents` | consistency verdict |
 | GET | `/v1/inquiries/{id}/trail` | full evidence trail + audit timeline |
 | POST | `/v1/invoices`, `/v1/invoices/from-text` | submit / AI-capture and validate |
-| POST | `/v1/invoices/{id}/validate`, `/correct`, `/approve`, `/void` | exception loop |
+| POST | `/v1/invoices/{id}/validate`, `/correct`, `/approve`, `/void`, `/payment` | exception loop and payment status |
 | POST | `/v1/expenses`, `/v1/expenses/{id}/correct`, `/approve`, `/reject` | expense loop |
-| GET / POST | `/v1/exceptions`, `/v1/exceptions/{id}/accept` | review queue / override |
+| GET / POST | `/v1/exceptions`, `/v1/exceptions/{id}/accept`, `/{id}/explanation` | review queue, override, AI explanation (advisory) |
 | POST | `/v1/ops/workflow-failures` | failure reporting from n8n |
 
 Full schemas at `/docs`.
@@ -187,23 +192,34 @@ samples/        sample inquiries and invoice texts
 ```
 
 ## 11. Assumptions
-* One product per inquiry; single currency per document; tax is zero in generated invoices.
+* **Lead and qualification are not separate tables**: the inquiry row *is* the lead (customer, message, status,
+  extracted data) and the qualification is the `rule_decisions` row (outcome, reasons, rule version) together with
+  the inquiry status. Fewer entities, same information, full decision history.
+* One product per inquiry; single currency per document; tax is zero in generated invoices (the field exists and is
+  validated, so a tax rule is a small addition).
+* Payment is recorded through `POST /v1/invoices/{id}/payment`; only an approved invoice can be paid, and a database
+  trigger enforces it. There is no bank integration - payment is a mock event.
 * "Salesperson" and "manager" are roles, identified by the name typed in the approval form.
 * The customer accepts a quote when the order endpoint is called (no customer portal).
 * Appointments: weekdays 10:00-16:00 in `BUSINESS_TIMEZONE`, 30-minute slots, one per inquiry.
 * An invoice discount *lower* than approved is not a violation (customer pays more than the floor).
 * The approval thresholds apply to the discount percentage requested in the message.
 
-## 12. Known limitations
-* Render free tier sleeps after 15 min: the first call can take up to a minute (warm up before demos;
-  n8n timeouts are set generously).
-* One shared API key; no user accounts or role-based access in the API.
-* Calendar, accounting posting and notifications are mocked (n8n "demo" Set nodes mark where email/Slack go).
-* The mock LLM is regex-based and only understands the demo phrasings; the real behaviour comes from OpenAI.
-* No credit notes / partial invoices / multi-line orders; no currency conversion.
-* Approval-form links live inside one n8n execution; if that execution is deleted, the approval must be
-  decided through the API.
-* Tests run against a real Postgres (no in-memory fake) - accurate, but slower over long distances.
+## 12. Known limitations and what I would do next
+Kept deliberately out of scope to stay inside the timebox; estimates are additional effort.
+
+| Not implemented | Why / impact | How I would implement it | Effort |
+|---|---|---|---|
+| Render free tier sleeps (cold start up to ~1 min) | Only affects the first request; n8n timeouts absorb it | Paid instance or a keep-alive ping | 15 min |
+| User accounts and roles in the API | One shared API key; approver identity is the typed name | OIDC (Auth0/Entra) + role claims checked per endpoint; approver identity from the token | 1-2 days |
+| Review UI for the exception queue | Finance works through `/docs` or n8n today | Small React or Retool screen on `GET /v1/exceptions` + the correct/accept endpoints | 1 day |
+| Real notifications (email/Slack) and calendar | n8n "demo" Set nodes mark the place | Swap in Gmail/Slack and Google Calendar nodes with their credentials | 2-3 h |
+| Accounting posting (Xero/QuickBooks) | Invoices stop at `posted` | Connector + mapping, with the same idempotency and exception handling | 1-2 days |
+| Multi-line orders, several products, tax rules, credit notes | One product and zero tax per document | Line-item table, tax rule per product/region, credit-note document type | 1-2 days |
+| Currency conversion | Single currency per document | FX rate table + conversion at quote time, stored with the rate used | 4 h |
+| Separate test database and CI | Tests run against the demo database and locally | Second Supabase project + GitHub Actions running `pytest` on every push | 2 h |
+| Monitoring and alerting | Failures are visible in the exception queue and logs | Alert on open exceptions, error rate and approval age (e.g. Grafana/Sentry) | 4 h |
+| Rule thresholds in configuration | Thresholds are constants and environment variables | Versioned rules table with an approval flow for changes | 1 day |
 
 ## 13. AI-assisted development
 This project was built with the help of an AI assistant (Claude) for planning, scaffolding, code, tests and

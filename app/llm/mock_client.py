@@ -15,6 +15,8 @@ from app.llm.base import LLMResponse, LLMUnavailable
 _QTY = re.compile(r"(\d[\d,]*)\s*(?:units?|pcs|pieces|cases|boxes|bottles|cartons)\b", re.I)
 _DISCOUNT = re.compile(r"(\d+(?:\.\d+)?)\s*%")
 _PRODUCT = re.compile(r"\bproduct\s+([a-z0-9-]+)", re.I)
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+_NAME = re.compile(r"\b(?:I am|I'm|this is|regards,|thanks,)\s+([A-Z][a-z]+(?: [A-Z][a-z]+)?)", re.I)
 _APPOINTMENT = re.compile(r"\b(talk|call|meet|meeting|discuss|speak)\b", re.I)
 _WHEN = re.compile(r"\b(today|tomorrow|next week|monday|tuesday|wednesday|thursday|friday)\b", re.I)
 _DELIVERY = re.compile(r"\b(next (?:week|month|quarter)|asap|this month)\b", re.I)
@@ -85,7 +87,10 @@ class MockLLMClient:
         when = (_WHEN.search(text, talk.start()) or _WHEN.search(text)) if talk else None
         delivery = _DELIVERY.search(text)
 
+        email, name = _EMAIL.search(text), _NAME.search(text)
         data = {
+            "contact_name": name.group(1).strip() if name else None,
+            "contact_email": email.group(0).lower() if email else None,
             "product_name": f"Product {prod.group(1).upper()}" if prod else None,
             "quantity": int(qty.group(1).replace(",", "")) if qty else None,
             "requested_discount_pct": float(disc.group(1)) if disc else None,

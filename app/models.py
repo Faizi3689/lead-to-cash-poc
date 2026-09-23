@@ -241,6 +241,10 @@ class Invoice(Base):
     idempotency_key: Mapped[str | None] = mapped_column(Text)
     order_reference: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(Text, server_default=text("'received'"))
+    payment_status: Mapped[str] = mapped_column(Text, server_default=text("'unpaid'"))
+    amount_paid: Mapped[Decimal] = mapped_column(Numeric(14, 2), server_default=text("0"))
+    paid_at: Mapped[datetime | None] = mapped_column()
+    payment_reference: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(server_default=NOW)
     updated_at: Mapped[datetime] = mapped_column(server_default=NOW)
 

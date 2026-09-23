@@ -7,6 +7,7 @@ ground numbers against the message -> resolve product deterministically -> decid
 The AI only proposes data. It never approves, prices or discounts anything.
 """
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -22,7 +23,7 @@ from app.extraction.prompt import PROMPT_VERSION, build_messages, retry_feedback
 from app.extraction.validation import ExtractedInquiry, grounding_issues, parse_and_validate
 from app.llm.base import LLMClient, LLMUnavailable
 from app.models import AiRun, Inquiry, Product
-from app.services import exception_service
+from app.services import exception_service, inquiry_service
 
 log = logging.getLogger("app.extraction")
 
@@ -105,6 +106,25 @@ def _start(db: Session, inquiry_id: uuid.UUID) -> Inquiry | ExtractionResult:
                  inquiry_id=inquiry.id, before={"status": before}, after={"status": "extracting"})
     db.commit()
     return inquiry
+
+
+EMAIL_RE = re.compile(r"^[\w.+-]+@[\w-]+\.[\w.-]+$")
+
+
+def _link_contact(db: Session, inquiry: Inquiry, data: "ExtractedInquiry | None") -> None:
+    """If the message itself contained contact details and the webhook carried none, use them.
+    The email must be well formed AND actually present in the message (no invented contacts)."""
+    if data is None or inquiry.customer_id or not data.contact_email:
+        return
+    email = data.contact_email.strip().lower()
+    if not EMAIL_RE.match(email) or email not in inquiry.raw_message.lower():
+        return
+    inquiry.customer_id = inquiry_service._get_or_create_customer(db, data.contact_name, email)
+    inquiry.customer_email = inquiry.customer_email or email
+    inquiry.customer_name = inquiry.customer_name or data.contact_name
+    audit.record(db, action="customer.linked_from_message", entity_type="inquiry", entity_id=inquiry.id,
+                 inquiry_id=inquiry.id, actor="system",
+                 after={"customer_id": inquiry.customer_id, "email": email, "name": data.contact_name})
 
 
 def _replay(db: Session, inquiry: Inquiry) -> ExtractionResult:
@@ -197,6 +217,8 @@ def extract_inquiry(db: Session, inquiry_id: uuid.UUID, llm: LLMClient) -> Extra
         grounding = grounding_issues(valid, inquiry.raw_message)
         extracted.update({
             "ai_run_id": str(valid_run.id),
+            "contact_name": valid.contact_name,
+            "contact_email": valid.contact_email,
             "product_name_raw": valid.product_name,
             "product_id": str(product.id) if product else None,
             "sku": product.sku if product else None,
@@ -229,6 +251,7 @@ def extract_inquiry(db: Session, inquiry_id: uuid.UUID, llm: LLMClient) -> Extra
     extracted["review_reasons"] = reasons
 
     inquiry = db.execute(select(Inquiry).where(Inquiry.id == inquiry.id).with_for_update()).scalar_one()
+    _link_contact(db, inquiry, valid)
     inquiry.status = outcome
     inquiry.extracted = audit._jsonable(extracted)
     inquiry.accepted_ai_run_id = valid_run.id if (valid_run and outcome == "extracted") else None

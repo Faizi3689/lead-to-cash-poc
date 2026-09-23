@@ -265,19 +265,42 @@ wf3 = workflow("03 - Invoice Intake & Validation", [
             "={{ { request_id: $('Config').item.json.request_id, error: $json.error?.message || $json.error || 'unknown' } }}", 502),
     respond("Respond Result", (900, 200),
             "={{ { request_id: $('Config').item.json.request_id, invoice_id: $json.entity_id, status: $json.status, "
-            "replay: $json.replay, ai: $json.ai, exceptions: $json.open_exceptions.map(e => ({ type: e.exception_type, "
-            "severity: e.severity, message: e.message, overridable: e.overridable })) } }}", 200),
+            "replay: $json.replay, ai: $json.ai, exceptions: $json.open_exceptions.map(e => ({ id: e.exception_id, "
+            "type: e.exception_type, severity: e.severity, message: e.message, overridable: e.overridable })) } }}", 200),
     if_node("Blocked?", (1100, 200), [cond("={{ $json.status }}", "equals", "blocked")]),
-    setnode("Notify Finance (demo)", (1300, 100), [
-        ("message", "={{ 'Invoice ' + ($json.document.invoice_number || $json.entity_id) + ' blocked: ' + "
-                    "$json.open_exceptions.map(e => e.exception_type).join(', ') }}", "string"),
+    node("AI Explain (OpenAI)", "n8n-nodes-base.httpRequest", 4.2, (1300, 60), {
+        "method": "POST", "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "predefinedCredentialType", "nodeCredentialType": "openAiApi",
+        "sendBody": True, "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'gpt-4o-mini', temperature: 0, messages: ["
+                    "{ role: 'system', content: 'You explain finance exceptions to a finance officer in plain "
+                    "English. Two sentences maximum. State what is wrong and what a person should check. You never "
+                    "approve, clear or downgrade anything.' }, "
+                    "{ role: 'user', content: 'Invoice ' + ($json.document.invoice_number || $json.entity_id) + "
+                    "' was blocked. Findings: ' + JSON.stringify($json.open_exceptions.map(e => "
+                    "({ type: e.exception_type, message: e.message, details: e.details }))) } ] }) }}",
+        "options": {"timeout": 60000}},
+        retryOnFail=True, maxTries=2, waitBetweenTries=3000, onError="continueRegularOutput"),
+    http("Save Explanation", (1500, 60), "POST",
+         "={{ $('Config').item.json.api_base_url }}/v1/exceptions/"
+         "{{ $('Blocked?').item.json.open_exceptions[0].exception_id }}/explanation",
+         body="={{ JSON.stringify({ explanation: $json.choices ? $json.choices[0].message.content : "
+              "'AI explanation unavailable', source: 'ai:' + ($json.model || 'unknown') }) }}",
+         retries=2, on_error="continueRegularOutput"),
+    setnode("Notify Finance (demo)", (1700, 60), [
+        ("message", "={{ 'Invoice ' + ($('Blocked?').item.json.document.invoice_number || "
+                    "$('Blocked?').item.json.entity_id) + ' blocked: ' + "
+                    "$('Blocked?').item.json.open_exceptions.map(e => e.exception_type).join(', ') }}", "string"),
+        ("ai_explanation", "={{ $json.ai_explanation || '' }}", "string"),
         ("review_url", "={{ $('Config').item.json.api_base_url }}/docs", "string")]),
     noop("Validated", (1300, 300)),
 ], [("Webhook", "Config"), ("Config", "Raw Text?"),
     ("Raw Text?", "AI Capture Invoice", 0), ("Raw Text?", "Submit Invoice", 1),
     ("AI Capture Invoice", "Respond Result", 0), ("AI Capture Invoice", "Respond Error", 1),
     ("Submit Invoice", "Respond Result", 0), ("Submit Invoice", "Respond Error", 1),
-    ("Respond Result", "Blocked?"), ("Blocked?", "Notify Finance (demo)", 0), ("Blocked?", "Validated", 1)])
+    ("Respond Result", "Blocked?"),
+    ("Blocked?", "AI Explain (OpenAI)", 0), ("AI Explain (OpenAI)", "Save Explanation"),
+    ("Save Explanation", "Notify Finance (demo)"), ("Blocked?", "Validated", 1)])
 
 # ============================================================================ 99 Error handler
 wf99 = workflow("99 - Error Handler", [

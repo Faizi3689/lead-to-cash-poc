@@ -39,7 +39,8 @@ def invoice_out(i: Invoice, replay: bool = False) -> InvoiceOut:
                       invoice_date=_s(i.invoice_date), due_date=_s(i.due_date), subtotal=_s(i.subtotal),
                       discount_pct=_s(i.discount_pct), discount_amount=_s(i.discount_amount),
                       tax_amount=_s(i.tax_amount), total=_s(i.total), currency=i.currency,
-                      line_items=i.line_items or [], terms_hash=i.terms_hash, replay=replay)
+                      line_items=i.line_items or [], terms_hash=i.terms_hash,
+                      payment_status=i.payment_status, amount_paid=_s(i.amount_paid), replay=replay)
 
 
 def appointment_out(a: Appointment, replay: bool = False) -> AppointmentOut:

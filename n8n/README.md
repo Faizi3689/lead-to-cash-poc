@@ -5,7 +5,7 @@
 | `00_connectivity_check.json` | Webhook `POST /l2c-ping` | n8n -> API connectivity test (auth, retries, failure path) |
 | `01_lead_to_cash.json` | Webhook `POST /inquiry` | Intake -> AI extraction -> rules -> **responds immediately** -> approval form (Wait, 48 h timeout) -> quote -> order -> invoice -> invoice validation -> appointment -> consistency check |
 | `02_approval_timeout_sweep.json` | Every 15 min | Expires overdue approvals into the review queue |
-| `03_invoice_intake.json` | Webhook `POST /invoice` | Invoice submission (structured JSON or raw text read by AI) -> validation -> finance notification when blocked |
+| `03_invoice_intake.json` | Webhook `POST /invoice` | Invoice submission (structured JSON or raw text read by AI) -> validation -> **OpenAI node explains a blocked invoice in plain English** (advisory only, stored on the exception) -> finance notification |
 | `99_error_handler.json` | Error Trigger | Any unhandled workflow failure is recorded in the API (audit log / exception queue) |
 
 ## Design rules
@@ -22,7 +22,9 @@
 * **Nothing waits forever.** The approval form times out after 48 h and workflow 02 sweeps expired approvals.
 
 ## Setup (n8n Cloud or self-hosted)
-1. **Credential:** Header Auth named `L2C API Key` - header `X-API-Key`, value = the API's `API_KEY`.
+1. **Credentials:** (a) Header Auth named `L2C API Key` - header `X-API-Key`, value = the API's `API_KEY`;
+   (b) for workflow 03 only, an **OpenAI** credential (used by the *AI Explain* node; select it under
+   "Credential for OpenAI API").
 2. **Import** each JSON (Workflows -> Import from File).
 3. In every **HTTP Request** node select the `L2C API Key` credential (credentials are never exported).
 4. In every **Config** node check `api_base_url` (your Render URL, no trailing `/`).

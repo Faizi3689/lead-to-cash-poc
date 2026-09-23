@@ -10,6 +10,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 class ExtractedInquiry(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
+    contact_name: str | None = Field(default=None, max_length=200)
+    contact_email: str | None = Field(default=None, max_length=200)
     product_name: str | None = Field(default=None, max_length=200)
     quantity: int | None = Field(default=None, gt=0, le=1_000_000)
     requested_discount_pct: Decimal | None = Field(default=None, ge=0, le=100, decimal_places=2)
