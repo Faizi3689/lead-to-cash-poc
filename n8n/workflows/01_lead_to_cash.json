@@ -6,7 +6,9 @@
         "httpMethod": "POST",
         "path": "inquiry",
         "responseMode": "responseNode",
-        "options": {}
+        "options": {
+          "allowedOrigins": "*"
+        }
       },
       "id": "2fb161a1-10e8-53ce-90a2-52bfd54061f4",
       "name": "Webhook",
@@ -261,7 +263,7 @@
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { request_id: $('Config').item.json.request_id, inquiry_id: $json.inquiry_id, status: $json.status, outcome: $json.outcome, reasons: $json.reasons, extracted: $('AI Extract').item.json.extracted, requested_terms: $json.amounts, approval: $json.approval ? { approval_id: $json.approval.approval_id, required_role: $json.approval.required_role, status: $json.approval.status, expires_at: $json.approval.expires_at } : null, approval_form_url: ($json.approval && $json.approval.status === 'pending') ? $execution.resumeFormUrl : null } }}",
+        "responseBody": "={{ { request_id: $('Config').item.json.request_id, inquiry_id: $json.inquiry_id, status: $json.status, outcome: $json.outcome, reasons: $json.reasons, attempts: $('AI Extract').item.json.attempts, confidence: $('AI Extract').item.json.confidence, product: $('AI Extract').item.json.product, rule_version: $json.rule_version, extracted: $('AI Extract').item.json.extracted, requested_terms: $json.amounts, approval: $json.approval ? { approval_id: $json.approval.approval_id, required_role: $json.approval.required_role, status: $json.approval.status, expires_at: $json.approval.expires_at } : null, approval_form_url: ($json.approval && $json.approval.status === 'pending') ? $execution.resumeFormUrl : null } }}",
         "options": {
           "responseCode": 200
         }

@@ -99,7 +99,8 @@ INQ = "$('Create Inquiry').item.json.inquiry_id"
 # ============================================================================ 01 Lead-to-Cash
 wf1_nodes = [
     node("Webhook", "n8n-nodes-base.webhook", 2, (0, 300),
-         {"httpMethod": "POST", "path": "inquiry", "responseMode": "responseNode", "options": {}},
+         {"httpMethod": "POST", "path": "inquiry", "responseMode": "responseNode",
+          "options": {"allowedOrigins": "*"}},
          webhookId="l2c-inquiry"),
     config((200, 300), [("idempotency_key",
                          "={{ $json.body.message_id ? 'msg-' + $json.body.message_id : "
@@ -132,6 +133,8 @@ wf1_nodes = [
     respond("Respond Accepted", (1200, 300),
             "={{ { request_id: $('Config').item.json.request_id, inquiry_id: $json.inquiry_id, "
             "status: $json.status, outcome: $json.outcome, reasons: $json.reasons, "
+            "attempts: $('AI Extract').item.json.attempts, confidence: $('AI Extract').item.json.confidence, "
+            "product: $('AI Extract').item.json.product, rule_version: $json.rule_version, "
             "extracted: $('AI Extract').item.json.extracted, requested_terms: $json.amounts, "
             "approval: $json.approval ? { approval_id: $json.approval.approval_id, "
             "required_role: $json.approval.required_role, status: $json.approval.status, "
@@ -249,7 +252,8 @@ IKEY = ("idempotency_key", "={{ $json.body.submission_id ? 'sub-' + $json.body.s
                            "'sha-' + JSON.stringify($json.body).hash('sha256') }}", "string")
 wf3 = workflow("03 - Invoice Intake & Validation", [
     node("Webhook", "n8n-nodes-base.webhook", 2, (0, 200),
-         {"httpMethod": "POST", "path": "invoice", "responseMode": "responseNode", "options": {}},
+         {"httpMethod": "POST", "path": "invoice", "responseMode": "responseNode",
+          "options": {"allowedOrigins": "*"}},
          webhookId="l2c-invoice"),
     config((200, 200), [IKEY]),
     if_node("Raw Text?", (400, 200), [cond("={{ $('Webhook').item.json.body.raw_text }}", "notEmpty")]),

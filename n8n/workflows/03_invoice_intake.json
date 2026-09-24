@@ -6,7 +6,9 @@
         "httpMethod": "POST",
         "path": "invoice",
         "responseMode": "responseNode",
-        "options": {}
+        "options": {
+          "allowedOrigins": "*"
+        }
       },
       "id": "2fb161a1-10e8-53ce-90a2-52bfd54061f4",
       "name": "Webhook",

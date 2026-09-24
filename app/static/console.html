@@ -126,7 +126,11 @@
   <div class="spacer"></div>
   <div class="tiny"><span class="dot" id="healthDot"></span><span id="healthText">checking service…</span></div>
   <input id="apiKey" type="password" placeholder="API key" autocomplete="off">
-  <button class="btn ghost" id="saveKey">Use key</button>
+  <input id="n8nBase" type="text" placeholder="https://your-name.app.n8n.cloud" autocomplete="off">
+  <label class="tiny" style="display:flex;gap:6px;align-items:center;color:#A8B2C7">
+    <input type="checkbox" id="viaN8n"> run through n8n
+  </label>
+  <button class="btn ghost" id="saveKey">Save</button>
 </header>
 
 <main>
@@ -187,8 +191,9 @@
 
 <script>
 const $ = s => document.querySelector(s);
-const state = { key: localStorage.getItem("l2c_key") || "", inquiry: null, token: null, approvalId: null,
-                order: null, tab: "docs" };
+const state = { key: localStorage.getItem("l2c_key") || "", n8n: localStorage.getItem("l2c_n8n") || "",
+                viaN8n: localStorage.getItem("l2c_via") === "1",
+                inquiry: null, token: null, approvalId: null, order: null, tab: "docs" };
 
 const SCENARIOS = [
   { id:"manager", label:"20% · needs a manager",
@@ -256,8 +261,43 @@ async function health(){
 }
 $("#saveKey").onclick = () => {
   state.key = $("#apiKey").value.trim(); localStorage.setItem("l2c_key", state.key);
-  $("#runNote").textContent = "Key saved in this browser."; loadExceptions();
+  state.n8n = $("#n8nBase").value.trim().replace(/\/$/, ""); localStorage.setItem("l2c_n8n", state.n8n);
+  $("#runNote").textContent = "Saved in this browser."; loadExceptions();
 };
+$("#viaN8n").onchange = e => {
+  state.viaN8n = e.target.checked; localStorage.setItem("l2c_via", state.viaN8n ? "1" : "0");
+  $("#runNote").textContent = state.viaN8n
+    ? "Requests will go through the n8n workflow (approval happens on the n8n form)."
+    : "Requests go straight to the service.";
+};
+
+async function hook(path, body){
+  if(!state.n8n) throw new Error("Enter your n8n address first, then press Save.");
+  let res;
+  try{
+    res = await fetch(`${state.n8n}/webhook/${path}`, {method:"POST",
+      headers:{"Content-Type":"application/json"}, body: JSON.stringify(body)});
+  }catch(e){
+    throw new Error("The browser could not reach n8n. Check the address, that the workflow is active, "
+      + "and that the Webhook node has Allowed Origins (CORS) set to *.");
+  }
+  const data = await res.json().catch(()=>null);
+  if(!res.ok) throw new Error((data && (data.error || data.message)) || `n8n returned ${res.status}`);
+  return data;
+}
+function waitFor(id, wanted, seconds = 180){
+  return new Promise(resolve => {
+    const started = Date.now();
+    const tick = async () => {
+      try{
+        const d = await api("GET", `/v1/inquiries/${id}/documents`);
+        if(wanted.includes(d.inquiry_status) || Date.now() - started > seconds*1000) return resolve(d);
+      }catch(e){}
+      setTimeout(tick, 3000);
+    };
+    tick();
+  });
+}
 
 /* ---------------------------------------------------------------- scenarios */
 function paintScenarios(){
@@ -287,6 +327,7 @@ $("#run").onclick = async () => {
   $("#run").disabled = true; $("#runNote").textContent = "working…";
   const message = $("#message").value.trim();
   try{
+    if(state.viaN8n){ await runViaN8n(message); return; }
     stage("intake",{state:"busy"});
     const inq = await api("POST","/v1/inquiries",{message},{"Idempotency-Key":"console-"+crypto.randomUUID()});
     state.inquiry = inq.inquiry_id;
@@ -341,6 +382,90 @@ $("#run").onclick = async () => {
   }catch(e){ showError($("#stages"), e); }
   finally{ $("#run").disabled=false; if(!state.approvalId) $("#runNote").textContent=""; }
 };
+
+async function runViaN8n(message){
+  stage("intake",{state:"busy", html:"handing the request to the n8n workflow…"});
+  const r = await hook("inquiry", { message, message_id: "console-" + crypto.randomUUID() });
+  state.inquiry = r.inquiry_id;
+  stage("intake",{state:"done", tag:"workflow " + (r.request_id||"started"), tagClass:"teal",
+    html:`n8n stored the lead as <span class="mono">${esc((r.inquiry_id||"").slice(0,8))}</span> and answered
+          immediately - the long steps continue in the background.`});
+
+  const d = r.extracted || {};
+  $("#gAsked").textContent = pct(d.requested_discount_pct);
+  $("#gate").classList.add("live");
+  if(r.outcome === "needs_review" || r.status === "needs_review"){
+    stage("ai",{state:"stop", tag:"sent to a person", tagClass:"amber",
+      html:`<ul class="why">${(r.reasons||[]).map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`});
+    finish("This request needs a person. Nothing was priced or approved.", false);
+    loadExceptions(); return;
+  }
+  stage("ai",{state:"done", tag: r.confidence?`confidence ${(r.confidence*100).toFixed(0)}%`:"read", tagClass:"teal",
+    html: kv([["product", r.product? r.product.name : (d.sku||"—")],["quantity", d.quantity],
+              ["discount asked", pct(d.requested_discount_pct)],["meeting", d.appointment_requested?(d.appointment_preference||"yes"):"not asked"],
+              ["attempts", r.attempts]])});
+
+  const names = {auto_approve:"approved by the rules", salesperson_approval:"salesperson must approve",
+                 manager_approval:"manager must approve", reject:"refused by policy"};
+  const cls = r.outcome==="reject"?"red":(r.outcome==="auto_approve"?"teal":"amber");
+  stage("rules",{state: r.outcome==="reject"?"stop":"done", tag:names[r.outcome]||r.outcome, tagClass:cls,
+    html:`<ul class="why">${(r.reasons||[]).map(x=>`<li>${esc(x)}</li>`).join("")}</ul>` +
+         (r.rule_version?`<p class="tiny" style="margin:6px 0 0">Rule set <span class="mono">${esc(r.rule_version)}</span></p>`:"")});
+  if(r.outcome === "reject"){ $("#gApproved").textContent = "none";
+    finish("Refused automatically: the discount is outside company policy.", false); return; }
+
+  if(r.approval_form_url){
+    stage("approval",{state:"wait", tag:"waiting on the n8n form", tagClass:"amber",
+      html:`<div class="approval">
+              <div class="row">
+                <a class="btn amber" href="${esc(r.approval_form_url)}" target="_blank" rel="noopener">Open the approval form</a>
+                <span class="tiny">choose <b>modify</b>, enter the discount you allow, submit</span>
+              </div>
+              <p class="tiny" style="margin:7px 0 0">This is the link n8n would email the approver. The workflow is
+                paused until it is submitted, and expires after 48 hours.</p>
+            </div>`});
+    $("#runNote").textContent = "Waiting for the approver on the n8n form…";
+  } else {
+    stage("approval",{state:"done", tag:"no person needed", tagClass:"teal",
+      html:"Within the automatic limit, recorded by the rules."});
+  }
+
+  const docs = await waitFor(state.inquiry, ["invoiced","rejected","needs_review"]);
+  $("#runNote").textContent = "";
+  if(docs.inquiry_status === "rejected"){
+    stage("approval",{state:"stop", tag:"refused", tagClass:"red", html:"The approver refused the discount."});
+    $("#gApproved").textContent = "none";
+    finish("The approver refused. No quote, order or invoice exists.", false);
+    loadExceptions(); return;
+  }
+  if(docs.inquiry_status !== "invoiced"){
+    stage("docs",{state:"wait", tag:"still running", tagClass:"amber",
+      html:"The workflow has not finished yet. Open n8n > Executions to watch the remaining nodes."});
+    loadExceptions(); return;
+  }
+  const a = docs.documents.approval || {};
+  if(r.approval_form_url){
+    stage("approval",{state:"done", tag:"decided on the form", tagClass:"teal",
+      html: kv([["approved", pct(a.discount_pct)],["fingerprint", (a.terms_hash||"").slice(0,12)+"…"]])});
+  }
+  $("#gApproved").textContent = pct(a.discount_pct);
+  $("#gBilled").textContent = pct(docs.documents.invoice && docs.documents.invoice.discount_pct);
+  stage("docs",{state:"done", tag:"created by the workflow", tagClass:"teal",
+    html: kv([["quote", docs.documents.quote && docs.documents.quote.number],
+              ["order", docs.documents.order && docs.documents.order.number],
+              ["invoice", docs.documents.invoice && docs.documents.invoice.number],
+              ["total", docs.documents.invoice && docs.documents.invoice.total]])});
+  state.order = docs.documents.order && docs.documents.order.number;
+  const trail = await api("GET", `/v1/inquiries/${state.inquiry}/trail`).catch(()=>null);
+  const ap = trail && trail.story["5_executed"].appointment;
+  stage("appointment", ap
+    ? {state:"done", tag:"confirmed", tagClass:"teal",
+       html: kv([["when", new Date(ap.start).toLocaleString()],["asked for", ap.requested]])}
+    : {state:"done", tag:"not booked", tagClass:"grey", html:"No call was requested, or the calendar was unavailable."});
+  await loadDocs(); await loadTrail(); await loadExceptions();
+  finish(docs.consistent ? "Approved terms match the quote, the order and the invoice."
+                         : "Mismatch found between the approval and a document.", docs.consistent);
+}
 
 function approvalForm(dec){
   const a = dec.approval, amt = dec.amounts || {};
@@ -503,8 +628,16 @@ $("#checkInvoice").onclick = async () => {
   $("#checkInvoice").disabled = true; $("#invNote").textContent = "the AI is reading it…";
   $("#invResult").innerHTML = "";
   try{
-    const r = await api("POST","/v1/invoices/from-text",{raw_text:$("#invoiceText").value},
-                        {"Idempotency-Key":"console-inv-"+crypto.randomUUID()});
+    let r;
+    if(state.viaN8n){
+      const h = await hook("invoice", { submission_id: "console-" + crypto.randomUUID(),
+                                        raw_text: $("#invoiceText").value });
+      r = await api("GET", `/v1/invoices/${h.invoice_id}`);
+      r.ai = h.ai;
+    } else {
+      r = await api("POST","/v1/invoices/from-text",{raw_text:$("#invoiceText").value},
+                    {"Idempotency-Key":"console-inv-"+crypto.randomUUID()});
+    }
     const blocked = r.status === "blocked";
     const doc = r.document || {};
     $("#invResult").innerHTML = `
@@ -526,7 +659,7 @@ $("#checkInvoice").onclick = async () => {
 
 /* ---------------------------------------------------------------- boot */
 stagesInit(); paintScenarios(); invScenarios(); health();
-$("#apiKey").value = state.key;
+$("#apiKey").value = state.key; $("#n8nBase").value = state.n8n; $("#viaN8n").checked = state.viaN8n;
 loadDocs(); loadTrail(); loadExceptions();
 setInterval(health, 60000);
 </script>
