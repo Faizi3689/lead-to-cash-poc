@@ -2,11 +2,12 @@
 import logging
 import re
 import uuid
+from pathlib import Path
 from datetime import datetime, timezone
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.config import get_settings
@@ -70,9 +71,19 @@ async def unhandled_error(request: Request, exc: Exception):
                                  "request_id": _rid(request)})
 
 
+CONSOLE = Path(__file__).resolve().parent / "static" / "console.html"
+
+
 @app.get("/", include_in_schema=False)
 def root():
-    return RedirectResponse(url="/docs")
+    return RedirectResponse(url="/console")
+
+
+@app.get("/console", include_in_schema=False)
+def console():
+    """Demo console: a single page that shows the flow as it happens. It holds no secrets -
+    the operator types the API key, and every call goes through the same protected endpoints."""
+    return FileResponse(CONSOLE, media_type="text/html")
 
 
 @app.get("/health")
