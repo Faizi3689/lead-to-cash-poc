@@ -222,7 +222,7 @@ Kept deliberately out of scope to stay inside the timebox; estimates are additio
 | Rule thresholds in configuration | Thresholds are constants and environment variables | Versioned rules table with an approval flow for changes | 1 day |
 
 ## 13. AI-assisted development
-This project was built with the help of an AI assistant (Claude) for planning, scaffolding, code, tests and
+This project was built with the help of an AI assistant  for planning, scaffolding, code and did some tests and
 documentation. I directed the design decisions, ran every step locally and on Render/n8n, fixed issues that came
 up during integration (connection pooling, Windows specifics, n8n configuration, test isolation), and reviewed the
-code so I can explain and change any part of it during the review.
+code so I can explain  any part of it during the review.
